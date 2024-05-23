@@ -41,37 +41,52 @@ fn main() -> rusb::Result<()> {
 fn capture_key_press<T: UsbContext>(context: &mut Arc<T>) -> rusb::Result<DeviceHandle<T>> {
     let devices = context.devices()?;
     for mut device in devices.iter() {
+        println!("device: {:#?}", device);
+
         let endpoints = find_readable_endpoints(&mut device, TransferType::Interrupt)?;
+        println!("endpoints: {:#?}", endpoints);
 
         match device.open() {
-            Ok(handle) => loop {
+            Ok(mut handle) => loop {
                 let endpoint = endpoints.first().unwrap();
-                // let has_kernel_driver = match handle.kernel_driver_active(endpoint.iface) {
-                //     Ok(true) => {
-                //         println!("{:?}", handle.detach_kernel_driver(endpoint.iface));
-                //         true
-                //     }
-                //     _ => false,
-                // };
+
+                let has_kernel_driver = match handle.kernel_driver_active(endpoint.iface) {
+                    Ok(true) => {
+                        handle.detach_kernel_driver(endpoint.iface)?;
+                        true
+                    }
+                    _ => false,
+                };
+
+                configure_endpoint(&mut handle, endpoint)?;
 
                 let mut buf = [0u8; 64];
                 let timeout = Duration::from_secs(1);
-                match handle.read_interrupt(endpoint.address, &mut buf, timeout) {
-                    Ok(_) => return Ok(handle),
+                let interrupt = handle.read_interrupt(endpoint.address, &mut buf, timeout);
+
+                if has_kernel_driver {
+                    handle.attach_kernel_driver(endpoint.iface).ok();
+                }
+
+                match interrupt {
+                    Ok(_) => {
+                        println!("read Interrupt: {:#?}", buf);
+                        return Ok(handle);
+                    }
                     Err(rusb::Error::Timeout) => continue,
                     Err(e) => {
-                        println!("{:#?}", endpoints);
                         eprint!("could not read Interrupt {:?}", e);
                         return Err(e);
                     }
                 };
             },
             e @ Err(_) => {
+                eprint!("could not open device {:?}", e);
                 return e;
             }
         }
     }
-    todo!()
+    Err(rusb::Error::NoDevice)
 }
 
 // returns all readable endpoints for given usb device and descriptor
@@ -107,6 +122,16 @@ fn find_readable_endpoints<T: UsbContext>(
     }
 
     Ok(endpoints)
+}
+
+fn configure_endpoint<T: UsbContext>(
+    handle: &mut DeviceHandle<T>,
+    endpoint: &Endpoint,
+) -> rusb::Result<()> {
+    handle.set_active_configuration(endpoint.config)?;
+    handle.claim_interface(endpoint.iface)?;
+    handle.set_alternate_setting(endpoint.iface, endpoint.setting)?;
+    Ok(())
 }
 
 #[allow(dead_code)]
