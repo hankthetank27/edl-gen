@@ -10,4 +10,3 @@ anyhow = "1.0.86"
 clap = {version = "4.5.4", features = [ "derive" ]}
 cpal = "0.15.3"
 ltc = "0.2.0"
-rusb = "0.9.4"

@@ -11,7 +11,7 @@ struct InputChannel {
     device_channels: usize,
 }
 
-pub fn decode_stream(opt: Opt) -> Result<(), anyhow::Error> {
+pub fn decode_stream(opt: &Opt) -> Result<(), anyhow::Error> {
     let host = cpal::default_host();
 
     // Set up the input device and stream with the default input config.

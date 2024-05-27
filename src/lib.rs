@@ -2,7 +2,7 @@ use anyhow::{self, bail};
 use clap::Parser;
 
 pub mod ltc;
-pub mod usb;
+pub mod web;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Generate EDL", long_about = None)]
@@ -14,6 +14,10 @@ pub struct Opt {
     fps: f32,
     #[arg(short, long, default_value_t = 480000.0)]
     sample_rate: f32,
+
+    /// Webserver
+    #[arg(short, long, default_value_t = 6969)]
+    port: usize,
 }
 
 impl Opt {
