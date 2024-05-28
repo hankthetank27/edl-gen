@@ -1,8 +1,9 @@
 use anyhow::{self, bail};
 use clap::Parser;
 
-pub mod ltc;
-pub mod web;
+pub mod ltc_decode;
+pub mod server;
+pub mod single_val_channel;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Generate EDL", long_about = None)]
@@ -22,7 +23,8 @@ pub struct Opt {
 
 impl Opt {
     pub fn configure(self) -> Result<Opt, anyhow::Error> {
-        if self.input_channel <= 0 {
+        // TODO: should be isize?
+        if self.input_channel == 0 {
             bail!(
                 "Invalid input channel: {}. Must be greater than 0.",
                 self.input_channel
