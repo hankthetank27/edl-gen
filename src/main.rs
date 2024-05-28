@@ -6,6 +6,6 @@ use edl_gen::Opt;
 
 fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::parse().configure()?;
-    web::listen(&opt);
-    ltc::decode_stream(&opt)
+    let ltc_reciver = ltc::decode_stream(&opt)?;
+    Ok(web::listen(&opt, ltc_reciver))
 }
