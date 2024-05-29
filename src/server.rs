@@ -26,9 +26,11 @@ fn handle_connection(mut stream: TcpStream, decode_handlers: &DecodeHandlers) {
                 .decode_state_sender
                 .send(DecodeState::On)
                 .unwrap();
-            let status_line = "HTTP/1.1 200 OK";
-            let content = "Started decoding".to_string();
-            (status_line, content)
+
+            // TODO: we might need to handle get_frame differently here in the
+            // case there is no audio to decode, as it blocks the thread
+            let (status_line, content) = get_frame(decode_handlers);
+            (status_line, format!("Started decoding. {}", content))
         }
 
         "GET /stop HTTP/1.1" => {
@@ -36,27 +38,16 @@ fn handle_connection(mut stream: TcpStream, decode_handlers: &DecodeHandlers) {
                 .decode_state_sender
                 .send(DecodeState::Off)
                 .unwrap();
-            let status_line = "HTTP/1.1 200 OK";
+
+            let status_line = "HTTP/1.1 200 OK".to_string();
             let content = "Stopped decoding".to_string();
             (status_line, content)
         }
 
-        "GET /log HTTP/1.1" => match decode_handlers.frame_recv.try_recv() {
-            Some(tc) => {
-                let status_line = "HTTP/1.1 200 OK";
-                let content = format!("timecode logged: {}", tc.format_time());
-                println!("Timecode Logged: {:#?}", tc);
-                (status_line, content)
-            }
-            None => {
-                let status_line = "HTTP/1.1 200 OK";
-                let content = "Unable to get timecode. Try begin decoding.".to_string();
-                (status_line, content)
-            }
-        },
+        "GET /log HTTP/1.1" => try_get_frame(decode_handlers),
 
         _ => {
-            let status_line = "HTTP/1.1 404 NOT FOUND";
+            let status_line = "HTTP/1.1 404 NOT FOUND".to_string();
             let content = "Command not found".to_string();
             (status_line, content)
         }
@@ -81,4 +72,30 @@ fn handle_connection(mut stream: TcpStream, decode_handlers: &DecodeHandlers) {
     let length = content.len();
     let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{content}");
     stream.write_all(response.as_bytes()).unwrap();
+}
+
+fn get_frame(decode_handlers: &DecodeHandlers) -> (String, String) {
+    let tc = decode_handlers.frame_recv.recv();
+    let status_line = "HTTP/1.1 200 OK".to_string();
+    let content = format!("timecode logged: {}", tc.format_time());
+    println!("Timecode Logged: {:#?}", tc);
+    (status_line, content)
+}
+
+fn try_get_frame(decode_handlers: &DecodeHandlers) -> (String, String) {
+    match decode_handlers.frame_recv.try_recv() {
+        Some(tc) => {
+            let status_line = "HTTP/1.1 200 OK".to_string();
+            let content = format!("timecode logged: {}", tc.format_time());
+            println!("Timecode Logged: {:#?}", tc);
+            (status_line, content)
+        }
+        None => {
+            let status_line = "HTTP/1.1 200 OK".to_string();
+            let content =
+                "Unable to get timecode. Make sure source is streaming and decoding has started."
+                    .to_string();
+            (status_line, content)
+        }
+    }
 }

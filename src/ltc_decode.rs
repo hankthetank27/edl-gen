@@ -73,6 +73,7 @@ impl LTCListener {
         let (frame_sender, frame_recv) = single_val_channel::channel::<LTCFrame>();
         let (decode_state_sender, decode_state_recv) = mpsc::channel::<DecodeState>();
         let frame_recv_drain = frame_recv.clone();
+
         thread::spawn(move || -> Result<(), anyhow::Error> {
             let mut decode_state = DecodeState::Off;
             let mut decoder = LTCDecoder::new(self.sample_per_frame, VecDeque::new());
