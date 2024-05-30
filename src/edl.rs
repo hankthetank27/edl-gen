@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Error};
 use vtc::Timecode;
 
 pub struct Edl {
@@ -34,7 +34,7 @@ struct AVChannels {
 
 impl AVChannels {
     //TODO: this is a dummy fn atm
-    fn from_str(input: String) -> Result<AVChannels, anyhow::Error> {
+    fn from_str(input: String) -> Result<AVChannels, Error> {
         Ok(AVChannels {
             video: true,
             audio: 0,
@@ -90,7 +90,7 @@ impl CutRecord {
         edit_type: String,
         source_tape: String,
         av_channels: String,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<Self, Error> {
         let source_in = timecode;
         let record_in = timecode;
         let av_channles = AVChannels::from_str(av_channels)?;

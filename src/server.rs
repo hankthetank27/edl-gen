@@ -1,11 +1,12 @@
-use vtc::Timecode;
-
 use crate::edl::CutRecord;
 use crate::ltc_decode::{DecodeHandlers, LTCListener};
 use crate::Opt;
+use anyhow::Error;
+use httparse::Request;
 use std::collections::VecDeque;
-use std::io::{prelude::*, BufReader};
+use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
+use vtc::Timecode;
 
 struct CutLog {
     log: VecDeque<CutRecord>,
@@ -31,11 +32,11 @@ impl CutLog {
         edit_type: String,
         source_tape: String,
         av_channnel: String,
-    ) -> Result<CutRecord, anyhow::Error> {
+    ) -> Result<&CutRecord, Error> {
         self.count += 1;
         let record = CutRecord::new(timecode, self.count, edit_type, source_tape, av_channnel)?;
-        self.log.push_back(record.clone());
-        Ok(record)
+        self.log.push_back(record);
+        Ok(self.log.front().unwrap())
     }
 
     fn pop(&mut self) -> Option<CutRecord> {
@@ -58,43 +59,64 @@ pub fn listen(ltc_listener: LTCListener, opt: &Opt) {
 }
 
 fn handle_connection(mut stream: TcpStream, decode_handlers: &DecodeHandlers, log: &mut CutLog) {
-    let buf_reader = BufReader::new(&mut stream);
-    let request_line = buf_reader.lines().next().unwrap().unwrap();
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+    let mut headers = [httparse::EMPTY_HEADER; 16];
+    let mut req = Request::new(&mut headers);
 
-    let (status_line, content) = match request_line.as_str() {
-        "GET /start HTTP/1.1" => {
-            decode_handlers.decode_on().unwrap();
-            log.clear();
+    let (status_line, content) = match req.parse(&buffer) {
+        Ok(_) => match req.method {
+            Some("GET") => match req.path {
+                Some("/start") => {
+                    decode_handlers.decode_on().unwrap();
+                    log.clear();
 
-            // TODO: we might need to handle get_frame differently here in the
-            // case there is no audio to decode, as it blocks the thread
-            let tc = decode_handlers.recv_frame().unwrap();
-            log.push(
-                tc,
-                "cut".to_string(),
-                "tape1".to_string(),
-                "test".to_string(),
-            )
-            .unwrap();
+                    // TODO: we might need to handle get_frame differently here in the
+                    // case there is no audio to decode, as it blocks the thread
+                    let tc = decode_handlers.recv_frame().unwrap();
+                    log.push(
+                        tc,
+                        "cut".to_string(),
+                        "tape1".to_string(),
+                        "test".to_string(),
+                    )
+                    .unwrap();
 
-            let status_line = "HTTP/1.1 200 OK".to_string();
-            let content = format!("timecode logged: {:#?}", tc.timecode());
-            println!("Timecode Logged: {:#?}", tc.timecode());
-            (status_line, format!("Started decoding. {}", content))
-        }
+                    let status_line = "HTTP/1.1 200 OK".to_string();
+                    let content = format!("timecode logged: {:#?}", tc.timecode());
+                    println!("Timecode Logged: {:#?}", tc.timecode());
+                    (status_line, format!("Started decoding. {}", content))
+                }
+                Some("/log") => try_get_frame(decode_handlers, log),
+                Some("/stop") => {
+                    decode_handlers.decode_off().unwrap();
+                    let (status_line, content) = try_get_frame(decode_handlers, log);
+                    let content = format!("Stopped decoding with {}", content);
+                    (status_line, content)
+                }
+                _ => not_found(),
+            },
+            Some("POST") => match req.path {
+                Some("/start") => {
+                    let body_length = req
+                        .headers
+                        .iter()
+                        .find(|header| header.name == "Content-Length")
+                        .unwrap();
 
-        "GET /log HTTP/1.1" => try_get_frame(decode_handlers, log),
-
-        "GET /stop HTTP/1.1" => {
-            decode_handlers.decode_off().unwrap();
-            let (status_line, content) = try_get_frame(decode_handlers, log);
-            let content = format!("Stopped decoding with {}", content);
-            (status_line, content)
-        }
-
-        _ => {
-            let status_line = "HTTP/1.1 404 NOT FOUND".to_string();
-            let content = "Command not found".to_string();
+                    println!("{:#?}", body_length);
+                    todo!()
+                }
+                Some("/log") => todo!(),
+                Some("/stop") => todo!(),
+                _ => not_found(),
+            },
+            _ => not_found(),
+        },
+        Err(e) => {
+            eprint!("Error parsing request: {}", e);
+            let status_line = "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string();
+            let content = "Failed to parse request".to_string();
             (status_line, content)
         }
     };
@@ -120,6 +142,12 @@ fn handle_connection(mut stream: TcpStream, decode_handlers: &DecodeHandlers, lo
     stream.write_all(response.as_bytes()).unwrap();
 }
 
+fn not_found() -> (String, String) {
+    let status_line = "HTTP/1.1 404 NOT FOUND".to_string();
+    let content = "Command not found".to_string();
+    (status_line, content)
+}
+
 fn try_get_frame(decode_handlers: &DecodeHandlers, log: &mut CutLog) -> (String, String) {
     match decode_handlers.try_recv_frame() {
         Ok(tc) => {
@@ -130,7 +158,8 @@ fn try_get_frame(decode_handlers: &DecodeHandlers, log: &mut CutLog) -> (String,
                     "tape1".to_string(),
                     "test".to_string(),
                 )
-                .unwrap();
+                .unwrap()
+                .source_timecode();
             let prev_record = log.pop().unwrap();
 
             let status_line = "HTTP/1.1 200 OK".to_string();
@@ -138,7 +167,7 @@ fn try_get_frame(decode_handlers: &DecodeHandlers, log: &mut CutLog) -> (String,
                 "Cut #{} logged: {} -- {}",
                 prev_record.edit_number(),
                 prev_record.source_timecode(),
-                curr_record.source_timecode()
+                curr_record
             );
             println!("{content}");
             (status_line, content)

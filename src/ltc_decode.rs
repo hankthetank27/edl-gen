@@ -1,6 +1,6 @@
 use crate::single_val_channel;
 use crate::Opt;
-use anyhow::{anyhow, Error};
+use anyhow::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ltc::{LTCDecoder, LTCFrame};
 use std::collections::VecDeque;
@@ -27,10 +27,7 @@ pub struct LTCListener<'a> {
 
 impl<'a> LTCListener<'a> {
     pub fn init(opt: &'a Opt) -> Result<Self, Error> {
-        let host = cpal::default_host();
-
-        // Set up the input device and stream with the default input config.
-        let device = host
+        let device = cpal::default_host()
             .default_input_device()
             .expect("failed to find input device");
 
@@ -93,32 +90,34 @@ impl<'a> LTCListener<'a> {
                 //     err_fn,
                 //     None,
                 // )?,
-                cpal::SampleFormat::F32 => self
-                    .device
-                    .build_input_stream(
-                        &self.config.into(),
-                        move |data: &[f32], _: &_| {
-                            if let Ok(state) = decode_state_recv.try_recv() {
-                                frame_recv_drain.try_recv(); // drain channel
-                                decoder = LTCDecoder::new(samples_per_frame, VecDeque::new());
-                                decode_state = state
-                            };
+                cpal::SampleFormat::F32 => {
+                    self.device
+                        .build_input_stream(
+                            &self.config.into(),
+                            move |data: &[f32], _: &_| {
+                                if let Ok(state) = decode_state_recv.try_recv() {
+                                    frame_recv_drain.try_recv(); // drain channel
+                                    decoder = LTCDecoder::new(samples_per_frame, VecDeque::new());
+                                    decode_state = state
+                                };
 
-                            if let DecodeState::On = decode_state {
-                                LTCListener::write_to_decoder(
-                                    data,
-                                    &mut decoder,
-                                    &frame_sender,
-                                    &self.input_channel,
-                                )
-                            };
-                        },
-                        |err| {
-                            eprintln!("an error occurred on stream: {}", err);
-                        },
-                        None,
-                    )
-                    .map_err(Error::msg),
+                                if let DecodeState::On = decode_state {
+                                    if let Some(tc) = LTCListener::write_to_decoder(
+                                        data,
+                                        &mut decoder,
+                                        &self.input_channel,
+                                    ) {
+                                        frame_sender.send(tc);
+                                    }
+                                };
+                            },
+                            |err| {
+                                eprintln!("an error occurred on stream: {}", err);
+                            },
+                            None,
+                        )
+                        .map_err(Error::msg)
+                }
 
                 sample_format => Err(Error::msg(format!(
                     "Unsupported sample format '{sample_format}'"
@@ -149,14 +148,13 @@ impl<'a> LTCListener<'a> {
     fn write_to_decoder(
         input: &[f32],
         decoder: &mut LTCDecoder,
-        frame_sender: &single_val_channel::Sender<LTCFrame>,
         input_channel: &InputChannel,
-    ) {
+    ) -> Option<LTCFrame> {
         let input = LTCListener::parse_mono_input_from_channel(input, input_channel);
         if decoder.write_samples(&input) {
-            if let Some(tc) = decoder.into_iter().next() {
-                frame_sender.send(tc);
-            };
+            decoder.into_iter().next()
+        } else {
+            None
         }
     }
 }
@@ -183,12 +181,15 @@ impl<'a> DecodeHandlers<'a> {
     pub fn try_recv_frame(&self) -> Result<Timecode, Error> {
         self.frame_recv
             .try_recv()
-            .ok_or_else(|| anyhow!("frame unavailable"))?
+            .map_err(Error::msg)?
             .into_timecode(self.opt)
     }
 
     pub fn recv_frame(&self) -> Result<Timecode, Error> {
-        self.frame_recv.recv().into_timecode(self.opt)
+        self.frame_recv
+            .recv()
+            .map_err(Error::msg)?
+            .into_timecode(self.opt)
     }
 
     pub fn decode_on(&self) -> Result<(), Error> {

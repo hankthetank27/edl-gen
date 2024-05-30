@@ -1,4 +1,32 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::{
+    error::Error,
+    fmt,
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
+};
+
+#[derive(Debug)]
+pub enum ChannelErr {
+    Lock,
+    NoVal,
+}
+impl Error for ChannelErr {}
+
+impl fmt::Display for ChannelErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ChannelErr::Lock => write!(f, "Lock poisoned"),
+            ChannelErr::NoVal => write!(f, "No value found"),
+        }
+    }
+}
+
+type PErr<'a, T> = PoisonError<MutexGuard<'a, Option<T>>>;
+
+impl<'a, T> From<PErr<'a, T>> for ChannelErr {
+    fn from(_: PErr<'a, T>) -> ChannelErr {
+        ChannelErr::Lock
+    }
+}
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     let channel = Arc::new(Context::new());
@@ -30,10 +58,11 @@ impl<T> Default for Context<T> {
 pub struct Sender<T>(Arc<Context<T>>);
 
 impl<T> Sender<T> {
-    pub fn send(&self, value: T) {
-        let mut guard = self.0.value.lock().unwrap();
+    pub fn send(&self, value: T) -> Result<(), ChannelErr> {
+        let mut guard = self.0.value.lock()?;
         *guard = Some(value);
         self.0.cvar.notify_all();
+        Ok(())
     }
 }
 
@@ -46,19 +75,19 @@ impl<T> Clone for Sender<T> {
 
 pub struct Receiver<T>(Arc<Context<T>>);
 
-impl<T> Receiver<T> {
-    pub fn try_recv(&self) -> Option<T> {
-        let mut guard = self.0.value.lock().unwrap();
-        guard.take()
+impl<T: fmt::Debug> Receiver<T> {
+    pub fn try_recv(&self) -> Result<T, ChannelErr> {
+        let mut guard = self.0.value.lock()?;
+        guard.take().ok_or(ChannelErr::NoVal)
     }
 
     // TODO: see call in server
-    pub fn recv(&self) -> T {
-        let mut guard = self.0.value.lock().unwrap();
+    pub fn recv(&self) -> Result<T, ChannelErr> {
+        let mut guard = self.0.value.lock()?;
         while guard.is_none() {
-            guard = self.0.cvar.wait(guard).unwrap();
+            guard = self.0.cvar.wait(guard)?;
         }
-        guard.take().unwrap()
+        Ok(guard.take().unwrap())
     }
 }
 
