@@ -4,62 +4,108 @@
 
 #![allow(dead_code)]
 
-use anyhow::{anyhow, Error};
+use anyhow::Error;
 use vtc::Timecode;
 
+use crate::cut_log::{CutRecord, EditRecord};
+
+#[derive(Debug, Clone)]
 pub struct Edl {
     title: String,
     fcm: Fcm,
     edits: Vec<Edit>,
 }
 
+#[derive(Debug, Clone)]
 enum Fcm {
     DropFrame,
     NonDropFrame,
 }
 
 #[derive(Debug, Clone)]
-enum Edit {
-    Cut,
-    // Cut(Cut),
-    // Dissolve(Dissolve),
-    // Wipe(Wipe),
+pub enum Edit {
+    Cut(Clip),
+    Dissolve(Dissolve),
+    Wipe(Wipe),
+}
+
+impl Edit {
+    pub fn from_cuts(start: &CutRecord, end: &CutRecord) -> Result<Edit, Error> {
+        match start.edit_type {
+            EditRecord::Cut => {
+                let clip = Clip {
+                    edit_number: start.edit_number,
+                    source_tape: start.source_tape.clone(),
+                    av_channles: start.av_channles.clone(),
+                    source_in: start.source_in,
+                    source_out: end.source_in,
+                    record_in: start.record_in,
+                    record_out: end.source_in,
+                };
+                Ok(Edit::Cut(clip))
+            }
+            EditRecord::Wipe => todo!(),
+            EditRecord::Dissolve => todo!(),
+        }
+    }
+
+    //TODO: This is where we will write to file?
+    pub fn log_edit(self) -> Result<Self, Error> {
+        match self.clone() {
+            Edit::Cut(c) => {
+                let printable: PrintClip = c.into();
+                println!("edit logged: {:#?}", printable);
+            }
+            _ => (),
+        };
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone)]
-struct AVChannels {
+pub struct AVChannels {
     video: bool,
     audio: u8,
 }
 
 impl AVChannels {
     //TODO: this is a dummy fn atm
-    fn from_str(input: String) -> Result<AVChannels, Error> {
+    pub fn from_str(input: &str) -> Result<AVChannels, Error> {
         Ok(AVChannels {
             video: true,
-            audio: 0,
+            audio: 2,
         })
     }
 }
 
-// struct Cut {
-//     to: Clip,
-// }
+impl From<AVChannels> for String {
+    fn from(value: AVChannels) -> Self {
+        let audio = (1..value.audio + 1).fold("".to_string(), |acc, curr| format!("{acc}A{curr}"));
+        if value.video {
+            format!("V{audio}")
+        } else {
+            audio
+        }
+    }
+}
 
-// struct Dissolve {
-//     from: Clip,
-//     to: Clip,
-//     frames_length: usize,
-// }
+#[derive(Debug, Clone)]
+pub struct Dissolve {
+    from: Clip,
+    to: Clip,
+    frames_length: usize,
+}
 
-// struct Wipe {
-//     from: Clip,
-//     to: Clip,
-//     wipe_number: usize,
-//     frames_length: usize,
-// }
+#[derive(Debug, Clone)]
+pub struct Wipe {
+    from: Clip,
+    to: Clip,
+    wipe_number: usize,
+    frames_length: usize,
+}
 
-struct Clip {
+#[derive(Debug, Clone)]
+pub struct Clip {
     edit_number: usize,
     source_tape: String,
     av_channles: AVChannels,
@@ -70,51 +116,28 @@ struct Clip {
     //TODO: speed_change
 }
 
-// for tracking logs in queue.
-// since we have no information about what the out time will be we have to wait
-// until the next log and pop the prior logged value.
 #[derive(Debug, Clone)]
-pub struct CutRecord {
+struct PrintClip {
     edit_number: usize,
-    edit_type: Edit,
     source_tape: String,
-    av_channles: AVChannels,
-    source_in: Timecode,
-    record_in: Timecode,
+    av_channles: String,
+    source_in: String,
+    source_out: String,
+    record_in: String,
+    record_out: String,
+    //TODO: speed_change
 }
 
-impl CutRecord {
-    pub fn new(
-        timecode: Timecode,
-        edit_number: usize,
-        edit_type: &str,
-        source_tape: &str,
-        av_channels: &str,
-    ) -> Result<Self, Error> {
-        let source_in = timecode;
-        let record_in = timecode;
-        let source_tape = source_tape.to_string();
-        let av_channles = AVChannels::from_str(av_channels.to_string())?;
-        let edit_type = match edit_type.to_lowercase().as_str() {
-            "cut" => Ok(Edit::Cut),
-            _ => Err(anyhow!("invalid edit type")),
-        }?;
-
-        Ok(CutRecord {
-            edit_number,
-            edit_type,
-            source_tape,
-            av_channles,
-            source_in,
-            record_in,
-        })
-    }
-
-    pub fn source_timecode(&self) -> String {
-        self.source_in.timecode()
-    }
-
-    pub fn edit_number(&self) -> usize {
-        self.edit_number
+impl From<Clip> for PrintClip {
+    fn from(value: Clip) -> Self {
+        PrintClip {
+            edit_number: value.edit_number,
+            source_tape: value.source_tape,
+            av_channles: value.av_channles.into(),
+            source_in: value.source_in.timecode(),
+            source_out: value.source_out.timecode(),
+            record_in: value.record_in.timecode(),
+            record_out: value.record_out.timecode(),
+        }
     }
 }

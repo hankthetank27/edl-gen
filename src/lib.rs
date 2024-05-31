@@ -1,5 +1,6 @@
 use clap::{Parser, ValueEnum};
 
+pub mod cut_log;
 pub mod edl;
 pub mod ltc_decode;
 pub mod server;

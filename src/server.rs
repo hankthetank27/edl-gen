@@ -1,15 +1,14 @@
-use crate::edl::CutRecord;
-use crate::ltc_decode::{DecodeHandlers, LTCListener};
+use crate::cut_log::CutLog;
+use crate::edl::Edit;
+use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
 use crate::Opt;
-use anyhow::Error;
+use anyhow::Context;
 use httparse::{Request, Status};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::net::{TcpListener, TcpStream};
 use std::usize;
-use vtc::Timecode;
 
 pub struct Server {
     port: String,
@@ -25,14 +24,13 @@ impl Server {
     }
 
     pub fn listen(&mut self, ltc_listener: LTCListener) -> Result<(), anyhow::Error> {
-        let listener = TcpListener::bind(&self.port).unwrap();
+        let listener = TcpListener::bind(&self.port)?;
         let decode_handlers = ltc_listener.start_decode_stream();
 
         println!("listening on {}", &self.port);
 
         for stream in listener.incoming() {
-            let stream = stream.unwrap();
-            self.handle_connection(stream, &decode_handlers)?;
+            self.handle_connection(stream?, &decode_handlers)?;
         }
         Ok(())
     }
@@ -47,7 +45,7 @@ impl Server {
 
         let mut req_ctx = ReqContext::new(
             Request::new(&mut headers),
-            buf_reader.fill_buf().unwrap(),
+            buf_reader.fill_buf()?,
             &mut self.cut_log,
             decode_handlers,
         );
@@ -97,7 +95,6 @@ impl<'req> ReqContext<'req> {
                 let body = self.parse_req_body(header_len)?;
                 self.route_req(&body)
             }
-
             //TODO: idk if this acutally works with the headers.len() call
             Ok(Status::Partial) => {
                 let body = self.parse_req_body(self.req.headers.len())?;
@@ -114,22 +111,22 @@ impl<'req> ReqContext<'req> {
         match self.req.method {
             Some("POST") => match self.req.path {
                 Some("/start") => {
-                    self.decode_handlers.decode_on().unwrap();
+                    self.decode_handlers.decode_on()?;
                     self.cut_log.clear();
                     println!("wating for audio...");
                     let (status_line, content) =
-                        body.wait_for_frame(self.decode_handlers, self.cut_log)?;
+                        body.wait_for_first_frame(self.decode_handlers, self.cut_log)?;
                     let content = format!("Started decoding. {}", content);
                     println!("{}", content);
                     Ok((status_line, content))
                 }
                 Some("/stop") => {
-                    self.decode_handlers.decode_off().unwrap();
+                    self.decode_handlers.decode_off()?;
                     let (status_line, content) =
-                        body.try_get_frame(self.decode_handlers, self.cut_log)?;
+                        body.try_log_edit(self.decode_handlers, self.cut_log)?;
                     Ok((status_line, format!("Stopped decoding with {}", content)))
                 }
-                Some("/log") => body.try_get_frame(self.decode_handlers, self.cut_log),
+                Some("/log") => body.try_log_edit(self.decode_handlers, self.cut_log),
                 _ => Ok(not_found()),
             },
             _ => Ok(not_found()),
@@ -137,7 +134,7 @@ impl<'req> ReqContext<'req> {
     }
 
     //TODO: this should return a parsed body value, and ideally be able to chain the frame processing
-    //methods to it (ie. wait_for_frame, try_get_frame).
+    //methods to it (ie. wait_for_first_frame, parse_edit_from_log).
     fn parse_req_body(&self, header_len: usize) -> Result<EditRequest, anyhow::Error> {
         let body_length = self
             .req
@@ -155,7 +152,7 @@ impl<'req> ReqContext<'req> {
         let body_start = header_len;
         let body_end = body_start + body_length;
         let body = &self.buffer[body_start..body_end];
-        let body_str = std::str::from_utf8(body).map_err(anyhow::Error::msg)?;
+        let body_str = std::str::from_utf8(body)?;
         serde_json::from_str(body_str).map_err(anyhow::Error::msg)
     }
 }
@@ -168,51 +165,49 @@ struct EditRequest {
 }
 
 impl EditRequest {
-    fn wait_for_frame(
+    fn wait_for_first_frame(
         &self,
         decode_handlers: &DecodeHandlers,
         log: &mut CutLog,
     ) -> Result<ResContent, anyhow::Error> {
-        let tc = decode_handlers.recv_frame().map_err(anyhow::Error::msg)?;
-        log.push(tc, &self.edit_type, &self.source_tape, &self.av_channel)
-            .map_err(anyhow::Error::msg)?;
+        let tc = decode_handlers.recv_frame()?;
+        log.push(tc, &self.edit_type, &self.source_tape, &self.av_channel)?;
 
         let status_line = "HTTP/1.1 200 OK".to_string();
         let content = format!("timecode logged: {:#?}", tc.timecode());
         Ok((status_line, content))
     }
 
-    fn try_get_frame(
+    fn try_log_edit(
         &self,
         decode_handlers: &DecodeHandlers,
         log: &mut CutLog,
     ) -> Result<ResContent, anyhow::Error> {
-        match decode_handlers.try_recv_frame() {
-            Ok(tc) => {
-                let curr_record = log
-                    .push(tc, &self.edit_type, &self.source_tape, &self.av_channel)
-                    .map_err(anyhow::Error::msg)?
-                    .source_timecode();
-                let prev_record = log.pop().unwrap();
-
-                let status_line = "HTTP/1.1 200 OK".to_string();
-                let content = format!(
-                    "Cut #{} logged: {} -- {}",
-                    prev_record.edit_number(),
-                    prev_record.source_timecode(),
-                    curr_record
-                );
-                println!("{content}");
-                Ok((status_line, content))
-            }
-            Err(_) => {
-                let status_line = "HTTP/1.1 200 OK".to_string();
-                let content =
-                "Unable to get timecode. Make sure source is streaming and decoding has started."
-                    .to_string();
-                Ok((status_line, content))
-            }
+        match self.parse_edit_from_log(decode_handlers, log) {
+            Ok(edit) => Ok(edit.log_edit()?.into()),
+            Err(DecodeErr::NoVal(_)) => Ok(frame_unavailable()),
+            Err(e) => Err(anyhow::Error::msg(e)),
         }
+    }
+
+    fn parse_edit_from_log(
+        &self,
+        decode_handlers: &DecodeHandlers,
+        log: &mut CutLog,
+    ) -> Result<Edit, DecodeErr> {
+        let tc = decode_handlers.try_recv_frame()?;
+        log.push(tc, &self.edit_type, &self.source_tape, &self.av_channel)?;
+        let prev_record = log.pop().context("No value in cut_log")?;
+        let curr_record = log.front().context("No value in cut_log")?;
+        Ok(Edit::from_cuts(&prev_record, curr_record)?)
+    }
+}
+
+impl From<Edit> for ResContent {
+    fn from(value: Edit) -> Self {
+        let content = format!("{:#?}", value);
+        let status_line = "HTTP/1.1 200 OK".to_string();
+        (status_line, content)
     }
 }
 
@@ -246,50 +241,24 @@ impl From<ResContent> for GenericResponse {
     }
 }
 
+fn frame_unavailable() -> ResContent {
+    (
+        "HTTP/1.1 200 OK".to_string(),
+        "Unable to get timecode. Make sure source is streaming and decoding has started."
+            .to_string(),
+    )
+}
+
 fn server_err() -> ResContent {
-    let status_line = "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string();
-    let content = "Failed to parse request".to_string();
-    (status_line, content)
+    (
+        "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string(),
+        "Failed to parse request".to_string(),
+    )
 }
 
 fn not_found() -> ResContent {
-    let status_line = "HTTP/1.1 404 NOT FOUND".to_string();
-    let content = "Command not found".to_string();
-    (status_line, content)
-}
-
-struct CutLog {
-    log: VecDeque<CutRecord>,
-    count: usize,
-}
-
-impl CutLog {
-    fn new() -> Self {
-        CutLog {
-            log: VecDeque::new(),
-            count: 0,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.count = 0;
-        self.log.clear();
-    }
-
-    fn push(
-        &mut self,
-        timecode: Timecode,
-        edit_type: &str,
-        source_tape: &str,
-        av_channnel: &str,
-    ) -> Result<&CutRecord, Error> {
-        self.count += 1;
-        let record = CutRecord::new(timecode, self.count, edit_type, source_tape, av_channnel)?;
-        self.log.push_back(record);
-        Ok(self.log.front().unwrap())
-    }
-
-    fn pop(&mut self) -> Option<CutRecord> {
-        self.log.pop_front()
-    }
+    (
+        "HTTP/1.1 404 NOT FOUND".to_string(),
+        "Command not found".to_string(),
+    )
 }

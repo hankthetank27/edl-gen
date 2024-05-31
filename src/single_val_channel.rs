@@ -9,6 +9,7 @@ pub enum ChannelErr {
     Lock,
     NoVal,
 }
+
 impl Error for ChannelErr {}
 
 impl fmt::Display for ChannelErr {
@@ -75,7 +76,7 @@ impl<T> Clone for Sender<T> {
 
 pub struct Receiver<T>(Arc<Context<T>>);
 
-impl<T: fmt::Debug> Receiver<T> {
+impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, ChannelErr> {
         let mut guard = self.0.value.lock()?;
         guard.take().ok_or(ChannelErr::NoVal)

@@ -1,4 +1,5 @@
 use crate::single_val_channel;
+use crate::single_val_channel::ChannelErr;
 use crate::Opt;
 use anyhow::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -178,18 +179,12 @@ impl<'a> DecodeHandlers<'a> {
         }
     }
 
-    pub fn try_recv_frame(&self) -> Result<Timecode, Error> {
-        self.frame_recv
-            .try_recv()
-            .map_err(Error::msg)?
-            .into_timecode(self.opt)
+    pub fn try_recv_frame(&self) -> Result<Timecode, DecodeErr> {
+        Ok(self.frame_recv.try_recv()?.into_timecode(self.opt)?)
     }
 
-    pub fn recv_frame(&self) -> Result<Timecode, Error> {
-        self.frame_recv
-            .recv()
-            .map_err(Error::msg)?
-            .into_timecode(self.opt)
+    pub fn recv_frame(&self) -> Result<Timecode, DecodeErr> {
+        Ok(self.frame_recv.recv()?.into_timecode(self.opt)?)
     }
 
     pub fn decode_on(&self) -> Result<(), Error> {
@@ -202,6 +197,37 @@ impl<'a> DecodeHandlers<'a> {
         self.decode_state_sender
             .send(DecodeState::Off)
             .map_err(Error::msg)
+    }
+}
+
+#[derive(Debug)]
+pub enum DecodeErr {
+    NoVal(String),
+    Anyhow(String),
+}
+
+impl std::error::Error for DecodeErr {}
+
+impl std::fmt::Display for DecodeErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeErr::NoVal(m) | DecodeErr::Anyhow(m) => write!(f, "{}", m),
+        }
+    }
+}
+
+impl From<Error> for DecodeErr {
+    fn from(value: Error) -> Self {
+        DecodeErr::Anyhow(value.to_string())
+    }
+}
+
+impl From<ChannelErr> for DecodeErr {
+    fn from(value: ChannelErr) -> Self {
+        match value {
+            ChannelErr::Lock => DecodeErr::Anyhow(value.to_string()),
+            ChannelErr::NoVal => DecodeErr::NoVal(value.to_string()),
+        }
     }
 }
 
