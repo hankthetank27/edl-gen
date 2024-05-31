@@ -87,13 +87,14 @@ impl CutRecord {
     pub fn new(
         timecode: Timecode,
         edit_number: usize,
-        edit_type: String,
-        source_tape: String,
-        av_channels: String,
+        edit_type: &str,
+        source_tape: &str,
+        av_channels: &str,
     ) -> Result<Self, Error> {
         let source_in = timecode;
         let record_in = timecode;
-        let av_channles = AVChannels::from_str(av_channels)?;
+        let source_tape = source_tape.to_string();
+        let av_channles = AVChannels::from_str(av_channels.to_string())?;
         let edit_type = match edit_type.to_lowercase().as_str() {
             "cut" => Ok(Edit::Cut),
             _ => Err(anyhow!("invalid edit type")),

@@ -20,6 +20,6 @@ use edl_gen::Opt;
 fn main() -> Result<(), Error> {
     let opt = Opt::parse();
     let ltc_listener = LTCListener::init(&opt)?;
-    Server::new(&opt).listen(ltc_listener);
+    Server::new(&opt).listen(ltc_listener)?;
     Ok(())
 }
