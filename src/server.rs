@@ -1,8 +1,9 @@
 use crate::cut_log::CutLog;
-use crate::edl::Edit;
+use crate::edl::{AVChannels, Edit, Edl};
 use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
 use crate::Opt;
-use anyhow::Context;
+use anyhow::Error;
+use anyhow::{anyhow, Context};
 use httparse::{Request, Status};
 use serde::{Deserialize, Serialize};
 use std::io::prelude::*;
@@ -10,28 +11,36 @@ use std::io::BufReader;
 use std::net::{TcpListener, TcpStream};
 use std::usize;
 
-pub struct Server {
+pub struct Server<'a> {
     port: String,
     cut_log: CutLog,
+    opt: &'a Opt,
 }
 
-impl Server {
-    pub fn new(opt: &Opt) -> Self {
+impl<'a> Server<'a> {
+    pub fn new(opt: &'a Opt) -> Self {
         Server {
             port: format!("127.0.0.1:{}", opt.port),
             cut_log: CutLog::new(),
+            opt,
         }
     }
 
-    pub fn listen(&mut self, ltc_listener: LTCListener) -> Result<(), anyhow::Error> {
-        let listener = TcpListener::bind(&self.port)?;
+    pub fn listen(&mut self, ltc_listener: LTCListener) -> Result<(), Error> {
+        let listener =
+            TcpListener::bind(&self.port).context("Server could not initate TCP connection")?;
         let decode_handlers = ltc_listener.start_decode_stream();
+        let edl = Edl::new(self.opt)?;
 
         println!("listening on {}", &self.port);
 
         for stream in listener.incoming() {
-            self.handle_connection(stream?, &decode_handlers)?;
+            self.handle_connection(stream?, &decode_handlers, &edl)
+                .unwrap_or_else(|e| {
+                    eprintln!("Request could not be sent: {:#}", e);
+                });
         }
+
         Ok(())
     }
 
@@ -39,26 +48,26 @@ impl Server {
         &mut self,
         mut stream: TcpStream,
         decode_handlers: &DecodeHandlers,
-    ) -> Result<(), anyhow::Error> {
+        edl: &Edl,
+    ) -> Result<(), Error> {
         let mut buf_reader = BufReader::new(&mut stream);
         let mut headers = [httparse::EMPTY_HEADER; 16];
 
-        let mut req_ctx = ReqContext::new(
+        let res: GenericResponse = ReqContext::new(
             Request::new(&mut headers),
             buf_reader.fill_buf()?,
             &mut self.cut_log,
             decode_handlers,
-        );
-
-        let res: GenericResponse = req_ctx
-            .handle_req()
-            .unwrap_or_else(|e| {
-                eprintln!("{e}");
-                server_err()
-            })
-            .into();
+        )
+        .handle_req()
+        .unwrap_or_else(|e| {
+            eprintln!("Error processing request: {:#}", e);
+            server_err()
+        })
+        .into();
 
         stream.write_all(res.value.as_bytes())?;
+
         Ok(())
     }
 }
@@ -70,6 +79,7 @@ pub struct ReqContext<'req> {
     buffer: &'req [u8],
     cut_log: &'req mut CutLog,
     decode_handlers: &'req DecodeHandlers<'req>,
+    // TODO: attach open file here
 }
 
 impl<'req> ReqContext<'req> {
@@ -87,7 +97,7 @@ impl<'req> ReqContext<'req> {
         }
     }
 
-    fn handle_req(&mut self) -> Result<ResContent, anyhow::Error> {
+    fn handle_req(&mut self) -> Result<ResContent, Error> {
         match self.req.parse(self.buffer) {
             Ok(Status::Complete(header_len)) => {
                 //TODO: parse_req_body should return a body struct (whatever that looks like) and
@@ -107,7 +117,7 @@ impl<'req> ReqContext<'req> {
         }
     }
 
-    fn route_req(&mut self, body: &EditRequest) -> Result<ResContent, anyhow::Error> {
+    fn route_req(&mut self, body: &EditRequest) -> Result<ResContent, Error> {
         match self.req.method {
             Some("POST") => match self.req.path {
                 Some("/start") => {
@@ -133,27 +143,28 @@ impl<'req> ReqContext<'req> {
         }
     }
 
-    //TODO: this should return a parsed body value, and ideally be able to chain the frame processing
-    //methods to it (ie. wait_for_first_frame, parse_edit_from_log).
-    fn parse_req_body(&self, header_len: usize) -> Result<EditRequest, anyhow::Error> {
+    fn parse_req_body(&self, header_len: usize) -> Result<EditRequest, Error> {
         let body_length = self
             .req
             .headers
             .iter()
-            .find(|header| header.name == "Content-Length")
+            .find(|header| header.name.to_lowercase() == "content-length")
+            .ok_or_else(|| anyhow!("'Content-Length' header is missing"))
             .and_then(|header| {
                 std::str::from_utf8(header.value)
-                    .ok()?
-                    .parse::<usize>()
-                    .ok()
+                    .context("'Content-Length' header is not valid UTF-8")
             })
-            .unwrap_or(0);
+            .and_then(|header| {
+                header
+                    .parse::<usize>()
+                    .context("'Content-Length' header is not a valid number")
+            })?;
 
         let body_start = header_len;
         let body_end = body_start + body_length;
         let body = &self.buffer[body_start..body_end];
-        let body_str = std::str::from_utf8(body)?;
-        serde_json::from_str(body_str).map_err(anyhow::Error::msg)
+        let body_str = std::str::from_utf8(body).context("Request body is not valid UTF-8")?;
+        serde_json::from_str(body_str).context("Request body is not valid JSON")
     }
 }
 
@@ -161,7 +172,7 @@ impl<'req> ReqContext<'req> {
 struct EditRequest {
     edit_type: String,
     source_tape: String,
-    av_channel: String,
+    av_channel: AVChannels,
 }
 
 impl EditRequest {
@@ -169,7 +180,7 @@ impl EditRequest {
         &self,
         decode_handlers: &DecodeHandlers,
         log: &mut CutLog,
-    ) -> Result<ResContent, anyhow::Error> {
+    ) -> Result<ResContent, Error> {
         let tc = decode_handlers.recv_frame()?;
         log.push(tc, &self.edit_type, &self.source_tape, &self.av_channel)?;
 
@@ -182,11 +193,11 @@ impl EditRequest {
         &self,
         decode_handlers: &DecodeHandlers,
         log: &mut CutLog,
-    ) -> Result<ResContent, anyhow::Error> {
+    ) -> Result<ResContent, Error> {
         match self.parse_edit_from_log(decode_handlers, log) {
             Ok(edit) => Ok(edit.log_edit()?.into()),
             Err(DecodeErr::NoVal(_)) => Ok(frame_unavailable()),
-            Err(e) => Err(anyhow::Error::msg(e)),
+            Err(e) => Err(Error::msg(e)),
         }
     }
 

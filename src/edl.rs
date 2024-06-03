@@ -4,22 +4,82 @@
 
 #![allow(dead_code)]
 
-use anyhow::Error;
+use crate::Opt;
+use anyhow::{Context, Error};
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::Write;
+use std::path::Path;
 use vtc::Timecode;
 
 use crate::cut_log::{CutRecord, EditRecord};
 
-#[derive(Debug, Clone)]
-pub struct Edl {
-    title: String,
-    fcm: Fcm,
-    edits: Vec<Edit>,
+#[derive(Debug)]
+pub struct Edl<'a> {
+    //TODO: not sure i really need these first two properties
+    title: &'a str,
+    fcm: &'a Fcm,
+
+    file: BufWriter<File>,
 }
 
-#[derive(Debug, Clone)]
-enum Fcm {
+impl<'a> Edl<'a> {
+    pub fn new(opt: &'a Opt) -> Result<Self, Error> {
+        let make_path = |n: Option<u32>| match n {
+            //TODO: configurable base path
+            Some(n) => format!("./{}({}).edl", opt.title, n),
+            None => format!("./{}.edl", opt.title),
+        };
+
+        let mut path = make_path(None);
+        for i in 1.. {
+            match Path::new(path.as_str())
+                .try_exists()
+                .context("could not deterimine if file is safe to write")?
+            {
+                true => path = make_path(Some(i)),
+                false => break,
+            };
+        }
+
+        // TODO: should this write be a seperate function?
+        let mut f = BufWriter::new(File::create_new(Path::new(path.as_str()))?);
+        f.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
+        f.write_all(format!("FCM: {}\n", String::from(opt.ntsc.clone())).as_bytes())?;
+        f.flush()?;
+
+        Ok(Edl {
+            fcm: &opt.ntsc,
+            title: &opt.title,
+            file: f,
+        })
+    }
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum Fcm {
     DropFrame,
     NonDropFrame,
+}
+
+impl From<Fcm> for String {
+    fn from(value: Fcm) -> Self {
+        match value {
+            Fcm::DropFrame => "DROP FRAME",
+            Fcm::NonDropFrame => "NON-DROP FRAME",
+        }
+        .to_string()
+    }
+}
+
+impl Fcm {
+    pub fn as_vtc(&self) -> vtc::Ntsc {
+        match self {
+            Fcm::DropFrame => vtc::Ntsc::DropFrame,
+            Fcm::NonDropFrame => vtc::Ntsc::NonDropFrame,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +96,7 @@ impl Edit {
                 let clip = Clip {
                     edit_number: start.edit_number,
                     source_tape: start.source_tape.clone(),
-                    av_channles: start.av_channles.clone(),
+                    av_channles: start.av_channels.clone(),
                     source_in: start.source_in,
                     source_out: end.source_in,
                     record_in: start.record_in,
@@ -62,30 +122,18 @@ impl Edit {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AVChannels {
     video: bool,
     audio: u8,
 }
 
-impl AVChannels {
-    //TODO: this is a dummy fn atm
-    pub fn from_str(input: &str) -> Result<AVChannels, Error> {
-        Ok(AVChannels {
-            video: true,
-            audio: 2,
-        })
-    }
-}
-
 impl From<AVChannels> for String {
     fn from(value: AVChannels) -> Self {
-        let audio = (1..value.audio + 1).fold("".to_string(), |acc, curr| format!("{acc}A{curr}"));
-        if value.video {
-            format!("V{audio}")
-        } else {
-            audio
-        }
+        (1..value.audio + 1).fold(
+            if value.video { "V" } else { "" }.to_string(),
+            |acc, curr| format!("{acc}A{curr}"),
+        )
     }
 }
 
@@ -118,7 +166,7 @@ pub struct Clip {
 
 #[derive(Debug, Clone)]
 struct PrintClip {
-    edit_number: usize,
+    edit_number: String,
     source_tape: String,
     av_channles: String,
     source_in: String,
@@ -131,7 +179,7 @@ struct PrintClip {
 impl From<Clip> for PrintClip {
     fn from(value: Clip) -> Self {
         PrintClip {
-            edit_number: value.edit_number,
+            edit_number: value.edit_number.to_string(),
             source_tape: value.source_tape,
             av_channles: value.av_channles.into(),
             source_in: value.source_in.timecode(),

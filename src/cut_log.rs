@@ -30,10 +30,10 @@ impl CutLog {
         timecode: Timecode,
         edit_type: &str,
         source_tape: &str,
-        av_channnel: &str,
+        av_channnel: &AVChannels,
     ) -> Result<(), Error> {
         self.count += 1;
-        let record = CutRecord::new(timecode, self.count, edit_type, source_tape, av_channnel)?;
+        let record = CutRecord::new(timecode, self.count, av_channnel, edit_type, source_tape)?;
         self.log.push_back(record);
         Ok(())
     }
@@ -58,7 +58,7 @@ pub struct CutRecord {
     pub edit_number: usize,
     pub edit_type: EditRecord,
     pub source_tape: String,
-    pub av_channles: AVChannels,
+    pub av_channels: AVChannels,
     pub source_in: Timecode,
     pub record_in: Timecode,
 }
@@ -67,14 +67,14 @@ impl CutRecord {
     pub fn new(
         timecode: Timecode,
         edit_number: usize,
+        av_channels: &AVChannels,
         edit_type: &str,
         source_tape: &str,
-        av_channels: &str,
     ) -> Result<Self, Error> {
         let source_in = timecode;
         let record_in = timecode;
         let source_tape = source_tape.to_string();
-        let av_channles = AVChannels::from_str(av_channels)?;
+        let av_channels = av_channels.clone();
         let edit_type = match edit_type.to_lowercase().as_str() {
             "cut" => Ok(EditRecord::Cut),
             "wipe" => Ok(EditRecord::Wipe),
@@ -86,7 +86,7 @@ impl CutRecord {
             edit_number,
             edit_type,
             source_tape,
-            av_channles,
+            av_channels,
             source_in,
             record_in,
         })

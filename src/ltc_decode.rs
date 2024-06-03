@@ -1,7 +1,7 @@
 use crate::single_val_channel;
 use crate::single_val_channel::ChannelErr;
 use crate::Opt;
-use anyhow::Error;
+use anyhow::{Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ltc::{LTCDecoder, LTCFrame};
 use std::collections::VecDeque;
@@ -190,13 +190,13 @@ impl<'a> DecodeHandlers<'a> {
     pub fn decode_on(&self) -> Result<(), Error> {
         self.decode_state_sender
             .send(DecodeState::On)
-            .map_err(Error::msg)
+            .context("Unable message decoding on")
     }
 
     pub fn decode_off(&self) -> Result<(), Error> {
         self.decode_state_sender
             .send(DecodeState::Off)
-            .map_err(Error::msg)
+            .context("Unable message decoding off")
     }
 }
 
