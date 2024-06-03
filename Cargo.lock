@@ -300,6 +300,7 @@ dependencies = [
  "cpal",
  "httparse",
  "ltc",
+ "num",
  "serde",
  "serde_json",
  "vtc",

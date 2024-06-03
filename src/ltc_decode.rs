@@ -1,20 +1,18 @@
 use crate::single_val_channel::{self, ChannelErr};
 use crate::Opt;
 use anyhow::{Context, Error};
+use core::f32;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ltc::{LTCDecoder, LTCFrame};
+use num::cast::AsPrimitive;
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::thread;
 use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
-pub enum DecodeState {
-    On,
-    Off,
-}
-
+#[derive(Clone)]
 struct InputChannel {
-    input_channel: usize,
+    channel: usize,
     device_channels: usize,
 }
 
@@ -44,7 +42,7 @@ impl<'a> LTCListener<'a> {
         }
 
         let input_channel = InputChannel {
-            input_channel: opt.input_channel,
+            channel: opt.input_channel,
             device_channels: config.channels() as usize,
         };
 
@@ -65,60 +63,58 @@ impl<'a> LTCListener<'a> {
     pub fn start_decode_stream(self) -> DecodeHandlers<'a> {
         let (frame_sender, frame_recv) = single_val_channel::channel::<LTCFrame>();
         let (decode_state_sender, decode_state_recv) = mpsc::channel::<DecodeState>();
-        let frame_recv_drain = frame_recv.clone();
-        let samples_per_frame = self.samples_per_frame();
+
+        let mut ctx = DecodeContext {
+            decoder: LTCDecoder::new(self.samples_per_frame(), VecDeque::new()),
+            decode_state: DecodeState::Off,
+            frame_recv_drain: frame_recv.clone(),
+            samples_per_frame: self.samples_per_frame(),
+            input_channel: self.input_channel.clone(),
+            decode_state_recv,
+            frame_sender,
+        };
 
         thread::spawn(move || -> Result<(), Error> {
-            let mut decode_state = DecodeState::Off;
-            let mut decoder = LTCDecoder::new(samples_per_frame, VecDeque::new());
+            let err_fn = |err| {
+                eprintln!("an error occurred on stream: {}", err);
+            };
             let stream = match self.config.sample_format() {
-                // cpal::SampleFormat::I8 => device.build_input_stream(
-                //     &config.into(),
-                //     move |data, _: &_| write_input_data::<i8, i8>(data, &writer_2, opt.input_channel),
-                //     err_fn,
-                //     None,
-                // )?,
-                // cpal::SampleFormat::I16 => device.build_input_stream(
-                //     &config.into(),
-                //     move |data, _: &_| write_input_data::<i16, i16>(data, &writer_2, opt.input_channel),
-                //     err_fn,
-                //     None,
-                // )?,
-                // cpal::SampleFormat::I32 => device.build_input_stream(
-                //     &config.into(),
-                //     move |data, _: &_| write_input_data::<i32, i32>(data, &writer_2, opt.input_channel),
-                //     err_fn,
-                //     None,
-                // )?,
-                cpal::SampleFormat::F32 => {
-                    self.device
-                        .build_input_stream(
-                            &self.config.into(),
-                            move |data: &[f32], _: &_| {
-                                if let Ok(state) = decode_state_recv.try_recv() {
-                                    frame_recv_drain.try_recv(); // drain channel
-                                    decoder = LTCDecoder::new(samples_per_frame, VecDeque::new());
-                                    decode_state = state
-                                };
-
-                                if let DecodeState::On = decode_state {
-                                    if let Some(tc) = LTCListener::write_to_decoder(
-                                        data,
-                                        &mut decoder,
-                                        &self.input_channel,
-                                    ) {
-                                        frame_sender.send(tc);
-                                    }
-                                };
-                            },
-                            |err| {
-                                eprintln!("an error occurred on stream: {}", err);
-                            },
-                            None,
-                        )
-                        .map_err(Error::msg)
-                }
-
+                cpal::SampleFormat::I8 => self
+                    .device
+                    .build_input_stream(
+                        &self.config.into(),
+                        move |data: &[i8], _: &_| ctx.handle_decode(data),
+                        err_fn,
+                        None,
+                    )
+                    .context("Could not build input stream"),
+                cpal::SampleFormat::I16 => self
+                    .device
+                    .build_input_stream(
+                        &self.config.into(),
+                        move |data: &[i16], _: &_| ctx.handle_decode(data),
+                        err_fn,
+                        None,
+                    )
+                    .context("Could not build input stream"),
+                cpal::SampleFormat::I32 => self
+                    .device
+                    .build_input_stream(
+                        &self.config.into(),
+                        move |data: &[i32], _: &_| ctx.handle_decode(data),
+                        err_fn,
+                        None,
+                    )
+                    .context("Could not build input stream"),
+                cpal::SampleFormat::F32 => self
+                    .device
+                    .build_input_stream(
+                        &self.config.into(),
+                        move |data: &[f32], _: &_| ctx.handle_decode(data),
+                        err_fn,
+                        None,
+                    )
+                    .context("Could not build input stream"),
                 sample_format => Err(Error::msg(format!(
                     "Unsupported sample format '{sample_format}'"
                 ))),
@@ -137,25 +133,52 @@ impl<'a> LTCListener<'a> {
     fn samples_per_frame(&self) -> f32 {
         self.opt.sample_rate / self.opt.fps
     }
+}
 
-    fn parse_mono_input_from_channel<T: Copy>(input: &[T], channel: &InputChannel) -> Vec<T> {
-        input
-            .chunks(channel.device_channels)
-            .filter_map(|channels| Some(*channels.get(channel.input_channel - 1)?))
-            .collect()
+pub enum DecodeState {
+    On,
+    Off,
+}
+
+struct DecodeContext {
+    frame_recv_drain: single_val_channel::Receiver<LTCFrame>,
+    frame_sender: single_val_channel::Sender<LTCFrame>,
+    decode_state_recv: mpsc::Receiver<DecodeState>,
+    decode_state: DecodeState,
+    samples_per_frame: f32,
+    decoder: LTCDecoder,
+    input_channel: InputChannel,
+}
+
+impl DecodeContext {
+    fn handle_decode<T: AsPrimitive<f32>>(&mut self, data: &[T]) {
+        if let Ok(state) = self.decode_state_recv.try_recv() {
+            let _ = self.frame_recv_drain.try_recv();
+            self.decoder = LTCDecoder::new(self.samples_per_frame, VecDeque::new());
+            self.decode_state = state
+        };
+
+        if let DecodeState::On = self.decode_state {
+            if let Some(tc) = self.write_to_decoder(data) {
+                let _ = self.frame_sender.send(tc);
+            }
+        };
     }
 
-    fn write_to_decoder(
-        input: &[f32],
-        decoder: &mut LTCDecoder,
-        input_channel: &InputChannel,
-    ) -> Option<LTCFrame> {
-        let input = LTCListener::parse_mono_input_from_channel(input, input_channel);
-        if decoder.write_samples(&input) {
-            decoder.into_iter().next()
+    fn write_to_decoder<T: AsPrimitive<f32>>(&mut self, input: &[T]) -> Option<LTCFrame> {
+        let input = self.parse_mono_input_from_channel(input);
+        if self.decoder.write_samples(&input) {
+            self.decoder.into_iter().next()
         } else {
             None
         }
+    }
+
+    fn parse_mono_input_from_channel<T: AsPrimitive<f32>>(&self, input: &[T]) -> Vec<f32> {
+        input
+            .chunks(self.input_channel.device_channels)
+            .filter_map(|channels| Some(channels.get(self.input_channel.channel - 1)?.as_()))
+            .collect()
     }
 }
 

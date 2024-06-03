@@ -5,8 +5,7 @@ use crate::Opt;
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
 use httparse::{Request as ReqParser, Status};
 use serde::{Deserialize, Serialize};
-use std::io::prelude::*;
-use std::io::BufReader;
+use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
 
 pub struct Server<'a> {
@@ -66,7 +65,7 @@ impl<'a> Server<'a> {
 pub struct Context<'req> {
     cut_log: CutLog,
     decode_handlers: DecodeHandlers<'req>,
-    edl: Edl<'req>,
+    edl: Edl,
 }
 
 #[derive(Debug)]

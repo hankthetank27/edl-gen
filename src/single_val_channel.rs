@@ -69,7 +69,6 @@ impl<T> Sender<T> {
     }
 }
 
-//TODO: use weak ptr and upgrade on send?
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
         Sender(Arc::clone(&self.0))
@@ -95,7 +94,6 @@ impl<T> Receiver<T> {
     }
 }
 
-//TODO: use weak ptr and upgrade on recv?
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
         Receiver(Arc::clone(&self.0))

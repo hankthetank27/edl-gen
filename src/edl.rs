@@ -13,16 +13,12 @@ use vtc::Timecode;
 use crate::cut_log::{CutRecord, EditRecord};
 
 #[derive(Debug)]
-pub struct Edl<'a> {
-    //TODO: not sure i really need these first two properties
-    title: &'a str,
-    fcm: &'a Fcm,
-
+pub struct Edl {
     file: BufWriter<File>,
 }
 
-impl<'a> Edl<'a> {
-    pub fn new(opt: &'a Opt) -> Result<Self, Error> {
+impl Edl {
+    pub fn new(opt: &Opt) -> Result<Self, Error> {
         if !Path::new(&opt.dir).exists() {
             std::fs::create_dir_all(&opt.dir)?;
         }
@@ -48,11 +44,7 @@ impl<'a> Edl<'a> {
         f.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc.clone())).as_bytes())?;
         f.flush()?;
 
-        Ok(Edl {
-            fcm: &opt.ntsc,
-            title: &opt.title,
-            file: f,
-        })
+        Ok(Edl { file: f })
     }
 
     pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
