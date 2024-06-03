@@ -7,6 +7,7 @@ use vtc::Timecode;
 // since we have no information about what the out time will be we have to wait
 // until the next log and pop the prior logged value.
 
+#[derive(Debug)]
 pub struct CutLog {
     log: VecDeque<CutRecord>,
     count: usize,

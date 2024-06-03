@@ -2,14 +2,11 @@
 // https://www.edlmax.com/EdlMaxHelp/Edl/maxguide.html
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
 
-#![allow(dead_code)]
-
 use crate::Opt;
 use anyhow::{Context, Error};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::BufWriter;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use vtc::Timecode;
 
@@ -26,10 +23,13 @@ pub struct Edl<'a> {
 
 impl<'a> Edl<'a> {
     pub fn new(opt: &'a Opt) -> Result<Self, Error> {
+        if !Path::new(&opt.dir).exists() {
+            std::fs::create_dir_all(&opt.dir)?;
+        }
+
         let make_path = |n: Option<u32>| match n {
-            //TODO: configurable base path
-            Some(n) => format!("./{}({}).edl", opt.title, n),
-            None => format!("./{}.edl", opt.title),
+            Some(n) => format!("{}/{}({}).edl", opt.dir, opt.title, n),
+            None => format!("{}/{}.edl", opt.dir, opt.title),
         };
 
         let mut path = make_path(None);
@@ -43,10 +43,9 @@ impl<'a> Edl<'a> {
             };
         }
 
-        // TODO: should this write be a seperate function?
         let mut f = BufWriter::new(File::create_new(Path::new(path.as_str()))?);
         f.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        f.write_all(format!("FCM: {}\n", String::from(opt.ntsc.clone())).as_bytes())?;
+        f.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc.clone())).as_bytes())?;
         f.flush()?;
 
         Ok(Edl {
@@ -54,6 +53,19 @@ impl<'a> Edl<'a> {
             title: &opt.title,
             file: f,
         })
+    }
+
+    pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
+        let mut edit_str: String = match edit {
+            Edit::Cut(c) => PrintClip::from(c).into(),
+            _ => todo!(),
+        };
+
+        edit_str.push('\n');
+        self.file.write_all(edit_str.as_bytes())?;
+        self.file.flush()?;
+        println!("edit logged: {}", edit_str);
+        Ok(edit_str)
     }
 }
 
@@ -108,18 +120,6 @@ impl Edit {
             EditRecord::Dissolve => todo!(),
         }
     }
-
-    //TODO: This is where we will write to file?
-    pub fn log_edit(self) -> Result<Self, Error> {
-        match self.clone() {
-            Edit::Cut(c) => {
-                let printable: PrintClip = c.into();
-                println!("edit logged: {:#?}", printable);
-            }
-            _ => (),
-        };
-        Ok(self)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +137,7 @@ impl From<AVChannels> for String {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Dissolve {
     from: Clip,
@@ -144,6 +145,7 @@ pub struct Dissolve {
     frames_length: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Wipe {
     from: Clip,
@@ -165,7 +167,7 @@ pub struct Clip {
 }
 
 #[derive(Debug, Clone)]
-struct PrintClip {
+pub struct PrintClip {
     edit_number: String,
     source_tape: String,
     av_channles: String,
@@ -174,6 +176,21 @@ struct PrintClip {
     record_in: String,
     record_out: String,
     //TODO: speed_change
+}
+
+impl From<PrintClip> for String {
+    fn from(value: PrintClip) -> Self {
+        format!(
+            "{}  {}  {}  {}  {}  {}  {}\n",
+            value.edit_number,
+            value.source_tape,
+            value.av_channles,
+            value.record_in,
+            value.record_out,
+            value.source_in,
+            value.source_out
+        )
+    }
 }
 
 impl From<Clip> for PrintClip {

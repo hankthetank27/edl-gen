@@ -36,6 +36,7 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     (sender, receiver)
 }
 
+#[derive(Debug)]
 pub struct Context<T> {
     value: Mutex<Option<T>>,
     cvar: Condvar,
@@ -56,6 +57,7 @@ impl<T> Default for Context<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct Sender<T>(Arc<Context<T>>);
 
 impl<T> Sender<T> {
@@ -74,6 +76,7 @@ impl<T> Clone for Sender<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct Receiver<T>(Arc<Context<T>>);
 
 impl<T> Receiver<T> {

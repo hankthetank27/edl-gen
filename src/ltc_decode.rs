@@ -1,5 +1,4 @@
-use crate::single_val_channel;
-use crate::single_val_channel::ChannelErr;
+use crate::single_val_channel::{self, ChannelErr};
 use crate::Opt;
 use anyhow::{Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -160,6 +159,7 @@ impl<'a> LTCListener<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct DecodeHandlers<'a> {
     frame_recv: single_val_channel::Receiver<LTCFrame>,
     decode_state_sender: mpsc::Sender<DecodeState>,

@@ -11,6 +11,8 @@ pub mod single_val_channel;
 pub struct Opt {
     #[arg(short, long, default_value = "my-video")]
     title: String,
+    #[arg(short, long, default_value = "./edl-dump")]
+    dir: String,
     #[arg(short, long, default_value_t = 1)]
     input_channel: usize,
     #[arg(short, long, default_value_t = 23.976)]
