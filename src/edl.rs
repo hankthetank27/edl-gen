@@ -1,9 +1,13 @@
 // CMX3600 EDL
+//
+// https://xmil.biz/EDL-X/CMX3600.pdf
 // https://www.edlmax.com/EdlMaxHelp/Edl/maxguide.html
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
+// https://opentimelineio.readthedocs.io/en/latest/api/python/opentimelineio.adapters.cmx_3600.html
 
-use anyhow::{Context, Error};
+use anyhow::{anyhow, Context, Error};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -49,7 +53,7 @@ impl Edl {
 
     pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
         let mut edit_str: String = match edit {
-            Edit::Cut(c) => PrintClip::from(c).into(),
+            Edit::Cut(c) => PrintClip::from_clip(c, "C".into())?.into(),
             _ => todo!(),
         };
 
@@ -97,15 +101,15 @@ impl Edit {
     pub fn from_cuts(start: &CutRecord, end: &CutRecord) -> Result<Edit, Error> {
         match start.edit_type {
             EditRecord::Cut => {
-                let clip = Clip {
-                    edit_number: start.edit_number,
-                    source_tape: start.source_tape.clone(),
-                    av_channles: start.av_channels.clone(),
-                    source_in: start.source_in,
-                    source_out: end.source_in,
-                    record_in: start.record_in,
-                    record_out: end.source_in,
-                };
+                let clip = Clip::new(
+                    start.edit_number,
+                    start.source_tape.clone(),
+                    start.av_channels.clone(),
+                    start.source_in,
+                    end.source_in,
+                    start.record_in,
+                    end.source_in,
+                );
                 Ok(Edit::Cut(clip))
             }
             EditRecord::Wipe => todo!(),
@@ -158,10 +162,43 @@ pub struct Clip {
     //TODO: speed_change
 }
 
+impl Clip {
+    fn new(
+        edit_number: usize,
+        source_tape: String,
+        av_channles: AVChannels,
+        source_in: Timecode,
+        source_out: Timecode,
+        record_in: Timecode,
+        record_out: Timecode,
+    ) -> Self {
+        Clip {
+            edit_number,
+            source_tape,
+            av_channles,
+            source_in,
+            source_out,
+            record_in,
+            record_out,
+        }
+    }
+
+    fn format_timecode(&self) -> String {
+        format!(
+            "{} {} {} {}",
+            self.source_in.timecode(),
+            self.source_out.timecode(),
+            self.record_in.timecode(),
+            self.record_out.timecode()
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PrintClip {
     edit_number: String,
     source_tape: String,
+    cut_title: String,
     av_channles: String,
     source_in: String,
     source_out: String,
@@ -170,31 +207,45 @@ pub struct PrintClip {
     //TODO: speed_change
 }
 
+impl PrintClip {
+    fn from_clip(clip: Clip, cut_title: String) -> Result<Self, Error> {
+        Ok(PrintClip {
+            edit_number: PrintClip::validate_edit_num(&clip)?,
+            //TODO: need name validation
+            source_tape: clip.source_tape,
+            av_channles: clip.av_channles.into(),
+            source_in: clip.source_in.timecode(),
+            source_out: clip.source_out.timecode(),
+            record_in: clip.record_in.timecode(),
+            record_out: clip.record_out.timecode(),
+            cut_title,
+        })
+    }
+
+    fn validate_edit_num(clip: &Clip) -> Result<String, Error> {
+        match clip.edit_number.cmp(&1000) {
+            Ordering::Less => {
+                let edit_number = clip.edit_number.to_string();
+                let prepend_zeros = String::from_utf8(vec![b'0'; 3 - edit_number.len()])?;
+                Ok(format!("{prepend_zeros}{edit_number}"))
+            }
+            _ => Err(anyhow!("Cannot exceed 999 edits")),
+        }
+    }
+}
+
 impl From<PrintClip> for String {
     fn from(value: PrintClip) -> Self {
         format!(
-            "{}  {}  {}  {}  {}  {}  {}\n",
+            "{}  {}  {}  {} {} {} {} {}\n",
             value.edit_number,
             value.source_tape,
             value.av_channles,
+            value.cut_title,
             value.record_in,
             value.record_out,
             value.source_in,
             value.source_out
         )
-    }
-}
-
-impl From<Clip> for PrintClip {
-    fn from(value: Clip) -> Self {
-        PrintClip {
-            edit_number: value.edit_number.to_string(),
-            source_tape: value.source_tape,
-            av_channles: value.av_channles.into(),
-            source_in: value.source_in.timecode(),
-            source_out: value.source_out.timecode(),
-            record_in: value.record_in.timecode(),
-            record_out: value.record_out.timecode(),
-        }
     }
 }

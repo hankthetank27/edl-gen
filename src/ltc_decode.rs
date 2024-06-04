@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Error};
-use core::f32;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ltc::{LTCDecoder, LTCFrame};
 use num::cast::AsPrimitive;
@@ -10,12 +9,6 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
 use crate::single_val_channel::{self, ChannelErr};
 use crate::Opt;
-
-#[derive(Clone)]
-struct InputChannel {
-    channel: usize,
-    device_channels: usize,
-}
 
 pub struct LTCListener<'a> {
     config: cpal::SupportedStreamConfig,
@@ -136,6 +129,12 @@ impl<'a> LTCListener<'a> {
     fn samples_per_frame(&self) -> f32 {
         self.opt.sample_rate / self.opt.fps
     }
+}
+
+#[derive(Clone)]
+struct InputChannel {
+    channel: usize,
+    device_channels: usize,
 }
 
 pub enum DecodeState {

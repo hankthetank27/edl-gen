@@ -77,6 +77,13 @@ struct Response {
 }
 
 impl Response {
+    fn new(content: String, status_line: String) -> Self {
+        Response {
+            content,
+            status_line,
+        }
+    }
+
     fn parse_to_json(mut self) -> Result<Self, Error> {
         self.content =
             serde_json::to_string(&self.content).context("Could not parse HTTP Response")?;
@@ -164,18 +171,13 @@ impl<'r> Request<'r> {
 #[derive(Debug, Serialize, Deserialize)]
 struct EditRequestData {
     edit_type: String,
+    //for cuts and dissolves
+    edit_duration_frames: Option<u32>,
     source_tape: String,
     av_channel: AVChannels,
 }
 
 impl EditRequestData {
-    fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
-        let tc = ctx.decode_handlers.recv_frame()?;
-        ctx.cut_log
-            .push(tc, &self.edit_type, &self.source_tape, &self.av_channel)?;
-        Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
-    }
-
     fn try_log_edit(&self, ctx: &mut Context) -> Result<Response, Error> {
         match self.parse_edit_from_log(ctx) {
             Ok(edit) => Ok(ctx.edl.write_from_edit(edit)?.into()),
@@ -186,23 +188,34 @@ impl EditRequestData {
 
     fn parse_edit_from_log(&self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
         let tc = ctx.decode_handlers.try_recv_frame()?;
-        ctx.cut_log
-            .push(tc, &self.edit_type, &self.source_tape, &self.av_channel)?;
+        ctx.cut_log.push(
+            tc,
+            &self.edit_type,
+            &self.edit_duration_frames,
+            &self.source_tape,
+            &self.av_channel,
+        )?;
         let prev_record = ctx.cut_log.pop().context("No value in cut_log")?;
         let curr_record = ctx.cut_log.front().context("No value in cut_log")?;
         Ok(Edit::from_cuts(&prev_record, curr_record)?)
+    }
+
+    fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
+        let tc = ctx.decode_handlers.recv_frame()?;
+        ctx.cut_log.push(
+            tc,
+            &self.edit_type,
+            &self.edit_duration_frames,
+            &self.source_tape,
+            &self.av_channel,
+        )?;
+        Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }
 
 impl From<String> for Response {
     fn from(value: String) -> Self {
-        let content = format!("{:#?}", value);
-        let status_line = "HTTP/1.1 200 OK".to_string();
-
-        Response {
-            status_line,
-            content,
-        }
+        Response::new(value, "HTTP/1.1 200 OK".to_string())
     }
 }
 
@@ -225,23 +238,23 @@ impl From<Response> for SerializedResponse {
 }
 
 fn frame_unavailable() -> Response {
-    Response {
-        status_line: "HTTP/1.1 200 OK".to_string(),
-        content: "Unable to get timecode. Make sure source is streaming and decoding has started."
+    Response::new(
+        "Unable to get timecode. Make sure source is streaming and decoding has started."
             .to_string(),
-    }
+        "HTTP/1.1 200 OK".to_string(),
+    )
 }
 
 fn server_err() -> Response {
-    Response {
-        status_line: "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string(),
-        content: "Failed to parse request".to_string(),
-    }
+    Response::new(
+        "Failed to parse request".to_string(),
+        "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string(),
+    )
 }
 
 fn not_found() -> Response {
-    Response {
-        status_line: "HTTP/1.1 404 NOT FOUND".to_string(),
-        content: "Command not found".to_string(),
-    }
+    Response::new(
+        "Command not found".to_string(),
+        "HTTP/1.1 404 NOT FOUND".to_string(),
+    )
 }

@@ -31,11 +31,19 @@ impl CutLog {
         &mut self,
         timecode: Timecode,
         edit_type: &str,
+        edit_duration_frames: &Option<u32>,
         source_tape: &str,
         av_channnel: &AVChannels,
     ) -> Result<(), Error> {
+        let record = CutRecord::new(
+            timecode,
+            self.count + 1,
+            edit_duration_frames,
+            av_channnel,
+            edit_type,
+            source_tape,
+        )?;
         self.count += 1;
-        let record = CutRecord::new(timecode, self.count, av_channnel, edit_type, source_tape)?;
         self.log.push_back(record);
         Ok(())
     }
@@ -66,6 +74,7 @@ pub enum EditRecord {
 pub struct CutRecord {
     pub edit_number: usize,
     pub edit_type: EditRecord,
+    pub edit_duration_frames: u32,
     pub source_tape: String,
     pub av_channels: AVChannels,
     pub source_in: Timecode,
@@ -76,28 +85,23 @@ impl CutRecord {
     pub fn new(
         timecode: Timecode,
         edit_number: usize,
+        edit_duration_frames: &Option<u32>,
         av_channels: &AVChannels,
         edit_type: &str,
         source_tape: &str,
     ) -> Result<Self, Error> {
-        let source_in = timecode;
-        let record_in = timecode;
-        let source_tape = source_tape.to_string();
-        let av_channels = av_channels.clone();
-        let edit_type = match edit_type.to_lowercase().as_str() {
-            "cut" => Ok(EditRecord::Cut),
-            "wipe" => Ok(EditRecord::Wipe),
-            "dissolve" => Ok(EditRecord::Dissolve),
-            _ => Err(anyhow!("invalid edit type")),
-        }?;
+        let edit_type: EditRecord = edit_type.try_into()?;
+        let edit_duration_frames: u32 =
+            CutRecord::validate_edit_type_duration(&edit_type, edit_duration_frames)?;
 
         Ok(CutRecord {
-            edit_number,
+            source_tape: source_tape.to_string(),
+            av_channels: av_channels.clone(),
+            source_in: timecode,
+            record_in: timecode,
+            edit_duration_frames,
             edit_type,
-            source_tape,
-            av_channels,
-            source_in,
-            record_in,
+            edit_number,
         })
     }
 
@@ -107,5 +111,47 @@ impl CutRecord {
 
     pub fn edit_number(&self) -> usize {
         self.edit_number
+    }
+
+    fn validate_edit_type_duration(
+        edit_type: &EditRecord,
+        edit_duration_frames: &Option<u32>,
+    ) -> Result<u32, Error> {
+        let err_fn = |e| {
+            anyhow!(
+                "Edit type '{}' requires edit duration in frames",
+                String::from(e)
+            )
+        };
+        match edit_type {
+            EditRecord::Cut => Ok(0),
+            e @ EditRecord::Wipe | e @ EditRecord::Dissolve => {
+                edit_duration_frames.map_or_else(|| Err(err_fn(e)), Ok)
+            }
+        }
+    }
+}
+
+impl TryFrom<&str> for EditRecord {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.to_lowercase().as_str() {
+            "cut" => Ok(EditRecord::Cut),
+            "wipe" => Ok(EditRecord::Wipe),
+            "dissolve" => Ok(EditRecord::Dissolve),
+            _ => Err(anyhow!("invalid edit type")),
+        }
+    }
+}
+
+impl From<&EditRecord> for String {
+    fn from(value: &EditRecord) -> Self {
+        match value {
+            EditRecord::Cut => "cut",
+            EditRecord::Wipe => "wipe",
+            EditRecord::Dissolve => "dissolve",
+        }
+        .to_string()
     }
 }
