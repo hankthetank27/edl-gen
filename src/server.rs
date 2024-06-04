@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
 
-use crate::cut_log::CutLog;
-use crate::edl::{AVChannels, Edit, Edl};
+use crate::edl::{AVChannels, Edit, Edl, FrameDataPair};
+use crate::frame_queue::FrameQueue;
 use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
 use crate::Opt;
 
@@ -28,7 +28,7 @@ impl<'a> Server<'a> {
         let mut ctx = Context {
             decode_handlers: LTCListener::new(self.opt)?.listen(),
             edl: Edl::new(self.opt)?,
-            cut_log: CutLog::new(),
+            frame_queue: FrameQueue::new(),
         };
 
         println!("listening on {}", &self.port);
@@ -65,7 +65,7 @@ impl<'a> Server<'a> {
 
 #[derive(Debug)]
 pub struct Context<'serv> {
-    cut_log: CutLog,
+    frame_queue: FrameQueue,
     decode_handlers: DecodeHandlers<'serv>,
     edl: Edl,
 }
@@ -124,7 +124,7 @@ impl<'r> Request<'r> {
             Some("POST") => match self.path {
                 Some("/start") => {
                     ctx.decode_handlers.decode_on()?;
-                    ctx.cut_log.clear();
+                    ctx.frame_queue.clear();
                     println!("wating for audio...");
                     let mut response = self.body()?.wait_for_first_frame(ctx)?;
                     println!("ready!");
@@ -169,12 +169,13 @@ impl<'r> Request<'r> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct EditRequestData {
-    edit_type: String,
+pub struct EditRequestData {
+    pub(crate) edit_type: String,
     //for cuts and dissolves
-    edit_duration_frames: Option<u32>,
-    source_tape: String,
-    av_channel: AVChannels,
+    pub(crate) edit_duration_frames: Option<u32>,
+    pub(crate) wipe_num: Option<u32>,
+    pub(crate) source_tape: String,
+    pub(crate) av_channel: AVChannels,
 }
 
 impl EditRequestData {
@@ -188,27 +189,27 @@ impl EditRequestData {
 
     fn parse_edit_from_log(&self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
         let tc = ctx.decode_handlers.try_recv_frame()?;
-        ctx.cut_log.push(
-            tc,
-            &self.edit_type,
-            &self.edit_duration_frames,
-            &self.source_tape,
-            &self.av_channel,
-        )?;
-        let prev_record = ctx.cut_log.pop().context("No value in cut_log")?;
-        let curr_record = ctx.cut_log.front().context("No value in cut_log")?;
-        Ok(Edit::from_cuts(&prev_record, curr_record)?)
+        let prev_tape = ctx
+            .frame_queue
+            .front()
+            .context("No value in frame_queue")?
+            .source_tape
+            .clone();
+
+        ctx.frame_queue.push(tc, self, &prev_tape)?;
+
+        let prev_record = ctx.frame_queue.pop().context("No value in frame_queue")?;
+        let curr_record = ctx.frame_queue.front().context("No value in frame_queue")?;
+
+        Ok(Edit::try_from(FrameDataPair::new(
+            &prev_record,
+            curr_record,
+        ))?)
     }
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
         let tc = ctx.decode_handlers.recv_frame()?;
-        ctx.cut_log.push(
-            tc,
-            &self.edit_type,
-            &self.edit_duration_frames,
-            &self.source_tape,
-            &self.av_channel,
-        )?;
+        ctx.frame_queue.push(tc, self, &self.source_tape)?;
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }

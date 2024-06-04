@@ -5,15 +5,16 @@
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
 // https://opentimelineio.readthedocs.io/en/latest/api/python/opentimelineio.adapters.cmx_3600.html
 
-use anyhow::{anyhow, Context, Error};
+use anyhow::{anyhow, Context, Error, Ok};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::{u32, usize};
 use vtc::Timecode;
 
-use crate::cut_log::{CutRecord, EditRecord};
+use crate::frame_queue::{EditType, FrameData};
 use crate::Opt;
 
 #[derive(Debug)]
@@ -52,15 +53,11 @@ impl Edl {
     }
 
     pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
-        let mut edit_str: String = match edit {
-            Edit::Cut(c) => PrintClip::from_clip(c, "C".into())?.into(),
-            _ => todo!(),
-        };
-
+        let mut edit_str: String = edit.try_into()?;
         edit_str.push('\n');
         self.file.write_all(edit_str.as_bytes())?;
         self.file.flush()?;
-        println!("edit logged: {}", edit_str);
+        println!("Edit Logged: \n{}", edit_str);
         Ok(edit_str)
     }
 }
@@ -98,22 +95,133 @@ pub enum Edit {
 }
 
 impl Edit {
-    pub fn from_cuts(start: &CutRecord, end: &CutRecord) -> Result<Edit, Error> {
-        match start.edit_type {
-            EditRecord::Cut => {
-                let clip = Clip::new(
-                    start.edit_number,
-                    start.source_tape.clone(),
-                    start.av_channels.clone(),
-                    start.source_in,
-                    end.source_in,
-                    start.record_in,
-                    end.source_in,
-                );
-                Ok(Edit::Cut(clip))
+    fn get_strs(&self) -> Result<(String, String), Error> {
+        let c = "C   ".to_string();
+        let d = "D   ".to_string();
+        match self {
+            Edit::Cut(_) => Ok((c, "".to_string())),
+            Edit::Dissolve(_) => Ok((c, d)),
+            Edit::Wipe(w) => {
+                let num_str = validate_num_size(w.wipe_number)?;
+                Ok((c, format!("W{num_str}")))
             }
-            EditRecord::Wipe => todo!(),
-            EditRecord::Dissolve => todo!(),
+        }
+    }
+}
+
+impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
+    type Error = Error;
+
+    fn try_from(value: FrameDataPair<'a>) -> Result<Self, Self::Error> {
+        let edit_duration_err = |e| {
+            anyhow!(
+                "Edit type '{}' requires edit duration in frames",
+                String::from(e)
+            )
+        };
+
+        match &value.in_.edit_type {
+            EditType::Cut => {
+                let to = value.as_edit_dest_clip();
+                Ok(Edit::Cut(to))
+            }
+
+            e @ EditType::Dissolve => {
+                let from = value.as_edit_prev_clip();
+                let to = value.as_edit_dest_clip();
+
+                Ok(Edit::Dissolve(Dissolve {
+                    edit_duration_frames: value
+                        .in_
+                        .edit_duration_frames
+                        .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
+                    from,
+                    to,
+                }))
+            }
+
+            e @ EditType::Wipe => {
+                let from = value.as_edit_prev_clip();
+                let to = value.as_edit_dest_clip();
+
+                Ok(Edit::Wipe(Wipe {
+                    edit_duration_frames: value
+                        .in_
+                        .edit_duration_frames
+                        .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
+                    from,
+                    to,
+                    wipe_number: value.in_.wipe_num.map_or_else(
+                        || Err(anyhow!("Edit type 'wipe' expected wipe number")),
+                        Ok,
+                    )?,
+                }))
+            }
+        }
+    }
+}
+
+pub struct FrameDataPair<'a> {
+    in_: &'a FrameData,
+    out_: &'a FrameData,
+}
+
+impl<'a> FrameDataPair<'a> {
+    pub fn new(in_: &'a FrameData, out_: &'a FrameData) -> Self {
+        FrameDataPair { in_, out_ }
+    }
+
+    pub fn as_edit_dest_clip(&self) -> Clip {
+        Clip {
+            edit_number: self.in_.edit_number,
+            source_tape: self.in_.source_tape.clone(),
+            av_channels: self.in_.av_channels.clone(),
+            source_in: self.in_.source_tc,
+            source_out: self.out_.source_tc,
+            record_in: self.in_.record_tc,
+            record_out: self.out_.record_tc,
+        }
+    }
+
+    pub fn as_edit_prev_clip(&self) -> Clip {
+        Clip {
+            edit_number: self.in_.edit_number,
+            source_tape: self.in_.prev_tape.clone(),
+            av_channels: self.in_.av_channels.clone(),
+            source_in: self.in_.source_tc,
+            source_out: self.in_.source_tc,
+            record_in: self.in_.record_tc,
+            record_out: self.in_.record_tc,
+        }
+    }
+}
+
+impl TryFrom<Edit> for String {
+    type Error = Error;
+
+    fn try_from(value: Edit) -> Result<Self, Self::Error> {
+        let (cut_one_str, cut_two_str) = value.get_strs()?;
+        match value {
+            Edit::Cut(clip) => Ok(EdlEditLine::from_clip(clip, cut_one_str, None)?.into()),
+
+            Edit::Dissolve(dissolve) => {
+                let from: String = EdlEditLine::from_clip(dissolve.from, cut_one_str, None)?.into();
+                let to: String = EdlEditLine::from_clip(
+                    dissolve.to,
+                    cut_two_str,
+                    Some(dissolve.edit_duration_frames),
+                )?
+                .into();
+                Ok(format!("{from}{to}"))
+            }
+
+            Edit::Wipe(wipe) => {
+                let from: String = EdlEditLine::from_clip(wipe.from, cut_one_str, None)?.into();
+                let to: String =
+                    EdlEditLine::from_clip(wipe.to, cut_two_str, Some(wipe.edit_duration_frames))?
+                        .into();
+                Ok(format!("{from}{to}"))
+            }
         }
     }
 }
@@ -133,28 +241,26 @@ impl From<AVChannels> for String {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Dissolve {
     from: Clip,
     to: Clip,
-    frames_length: usize,
+    edit_duration_frames: u32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Wipe {
     from: Clip,
     to: Clip,
-    wipe_number: usize,
-    frames_length: usize,
+    wipe_number: u32,
+    edit_duration_frames: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Clip {
     edit_number: usize,
     source_tape: String,
-    av_channles: AVChannels,
+    av_channels: AVChannels,
     source_in: Timecode,
     source_out: Timecode,
     record_in: Timecode,
@@ -162,44 +268,13 @@ pub struct Clip {
     //TODO: speed_change
 }
 
-impl Clip {
-    fn new(
-        edit_number: usize,
-        source_tape: String,
-        av_channles: AVChannels,
-        source_in: Timecode,
-        source_out: Timecode,
-        record_in: Timecode,
-        record_out: Timecode,
-    ) -> Self {
-        Clip {
-            edit_number,
-            source_tape,
-            av_channles,
-            source_in,
-            source_out,
-            record_in,
-            record_out,
-        }
-    }
-
-    fn format_timecode(&self) -> String {
-        format!(
-            "{} {} {} {}",
-            self.source_in.timecode(),
-            self.source_out.timecode(),
-            self.record_in.timecode(),
-            self.record_out.timecode()
-        )
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct PrintClip {
+pub struct EdlEditLine {
     edit_number: String,
+    edit_duration_frames: String,
     source_tape: String,
-    cut_title: String,
-    av_channles: String,
+    edit_type: String,
+    av_channels: String,
     source_in: String,
     source_out: String,
     record_in: String,
@@ -207,45 +282,56 @@ pub struct PrintClip {
     //TODO: speed_change
 }
 
-impl PrintClip {
-    fn from_clip(clip: Clip, cut_title: String) -> Result<Self, Error> {
-        Ok(PrintClip {
-            edit_number: PrintClip::validate_edit_num(&clip)?,
+impl EdlEditLine {
+    fn from_clip(
+        clip: Clip,
+        edit_type: String,
+        edit_duration_frames: Option<u32>,
+    ) -> Result<Self, Error> {
+        let edit_duration_frames = match edit_duration_frames {
+            Some(n) => validate_num_size(n)?,
+            None => "   ".to_string(),
+        };
+
+        Ok(EdlEditLine {
+            edit_number: validate_num_size(clip.edit_number as u32)?,
             //TODO: need name validation
             source_tape: clip.source_tape,
-            av_channles: clip.av_channles.into(),
+            av_channels: clip.av_channels.into(),
             source_in: clip.source_in.timecode(),
             source_out: clip.source_out.timecode(),
             record_in: clip.record_in.timecode(),
             record_out: clip.record_out.timecode(),
-            cut_title,
+            edit_duration_frames,
+            edit_type,
         })
-    }
-
-    fn validate_edit_num(clip: &Clip) -> Result<String, Error> {
-        match clip.edit_number.cmp(&1000) {
-            Ordering::Less => {
-                let edit_number = clip.edit_number.to_string();
-                let prepend_zeros = String::from_utf8(vec![b'0'; 3 - edit_number.len()])?;
-                Ok(format!("{prepend_zeros}{edit_number}"))
-            }
-            _ => Err(anyhow!("Cannot exceed 999 edits")),
-        }
     }
 }
 
-impl From<PrintClip> for String {
-    fn from(value: PrintClip) -> Self {
+impl From<EdlEditLine> for String {
+    fn from(value: EdlEditLine) -> Self {
         format!(
-            "{}  {}  {}  {} {} {} {} {}\n",
+            "{}      {}      {}     {} {} {} {} {} {}\n",
             value.edit_number,
             value.source_tape,
-            value.av_channles,
-            value.cut_title,
+            value.av_channels,
+            value.edit_type,
+            value.edit_duration_frames,
             value.record_in,
             value.record_out,
             value.source_in,
             value.source_out
         )
+    }
+}
+
+fn validate_num_size(num: u32) -> Result<String, Error> {
+    match num.cmp(&1000) {
+        Ordering::Less => {
+            let num = num.to_string();
+            let prepend_zeros = String::from_utf8(vec![b'0'; 3 - num.len()])?;
+            Ok(format!("{prepend_zeros}{num}"))
+        }
+        _ => Err(anyhow!("Cannot exceed 999 edits")),
     }
 }

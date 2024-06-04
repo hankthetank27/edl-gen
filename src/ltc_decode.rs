@@ -252,6 +252,14 @@ impl<'a> DecodeHandlers<'a> {
         Ok(self.frame_recv.recv()?.into_timecode(self.opt)?)
     }
 
+    // pub fn try_recv_frame(&self) -> Result<LTCFrame, Error> {
+    //     self.frame_recv.try_recv().context("Frame unavailable")
+    // }
+
+    // pub fn recv_frame(&self) -> Result<LTCFrame, Error> {
+    //     self.frame_recv.recv().context("Frame unavailable")
+    // }
+
     pub fn decode_on(&self) -> Result<(), Error> {
         self.decode_state_sender
             .send(DecodeState::On)
