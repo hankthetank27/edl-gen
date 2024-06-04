@@ -1,12 +1,13 @@
-use crate::cut_log::CutLog;
-use crate::edl::{AVChannels, Edit, Edl};
-use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
-use crate::Opt;
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
 use httparse::{Request as ReqParser, Status};
 use serde::{Deserialize, Serialize};
 use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
+
+use crate::cut_log::CutLog;
+use crate::edl::{AVChannels, Edit, Edl};
+use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
+use crate::Opt;
 
 pub struct Server<'a> {
     port: String,
@@ -21,12 +22,12 @@ impl<'a> Server<'a> {
         }
     }
 
-    pub fn listen(&mut self, ltc_listener: LTCListener) -> Result<(), Error> {
+    pub fn listen(&mut self) -> Result<(), Error> {
         let listener =
             TcpListener::bind(&self.port).context("Server could not initate TCP connection")?;
         let mut ctx = Context {
+            decode_handlers: LTCListener::new(self.opt)?.listen(),
             edl: Edl::new(self.opt)?,
-            decode_handlers: ltc_listener.start_decode_stream(),
             cut_log: CutLog::new(),
         };
 
@@ -46,13 +47,14 @@ impl<'a> Server<'a> {
         let mut buf_reader = BufReader::new(&mut stream);
         let mut headers = [httparse::EMPTY_HEADER; 16];
 
-        let res: GenericResponse =
+        let res: SerializedResponse =
             Request::new(&mut ReqParser::new(&mut headers), buf_reader.fill_buf()?)?
                 .route(ctx)
                 .unwrap_or_else(|e| {
                     eprintln!("Error processing request: {:#}", e);
                     server_err()
                 })
+                .parse_to_json()?
                 .into();
 
         stream.write_all(res.value.as_bytes())?;
@@ -62,9 +64,9 @@ impl<'a> Server<'a> {
 }
 
 #[derive(Debug)]
-pub struct Context<'req> {
+pub struct Context<'serv> {
     cut_log: CutLog,
-    decode_handlers: DecodeHandlers<'req>,
+    decode_handlers: DecodeHandlers<'serv>,
     edl: Edl,
 }
 
@@ -74,24 +76,33 @@ struct Response {
     status_line: String,
 }
 
+impl Response {
+    fn parse_to_json(mut self) -> Result<Self, Error> {
+        self.content =
+            serde_json::to_string(&self.content).context("Could not parse HTTP Response")?;
+        Ok(self)
+    }
+}
+
 #[derive(Debug)]
-pub struct Request<'r> {
-    headers: &'r mut [httparse::Header<'r>],
-    method: Option<&'r str>,
-    path: Option<&'r str>,
+pub struct Request<'req> {
+    headers: &'req mut [httparse::Header<'req>],
+    method: Option<&'req str>,
+    path: Option<&'req str>,
     header_offset: usize,
-    buffer: &'r [u8],
+    buffer: &'req [u8],
 }
 
 impl<'r> Request<'r> {
-    //TODO: break all this stuff off the 'req' property into own properties, including a body
     fn new(req: &'r mut ReqParser<'r, 'r>, buffer: &'r [u8]) -> Result<Self, Error> {
         let header_offset = match req.parse(buffer) {
             Ok(Status::Complete(header_offset)) => Ok(header_offset),
+
             //TODO: this is funky. try with firefox and see.
             Ok(Status::Partial) => Ok(req.headers.len()),
             Err(e) => Err(anyhow!("Could not parse header lenght: {}", e)),
         }?;
+
         Ok(Request {
             headers: req.headers,
             method: req.method,
@@ -100,14 +111,6 @@ impl<'r> Request<'r> {
             buffer,
         })
     }
-
-    // fn initalize_with_offset(&mut self) -> Result<usize, Error> {
-    //     match self.req.parse(self.buffer) {
-    //         Ok(Status::Complete(header_offset)) => Ok(header_offset),
-    //         Ok(Status::Partial) => Ok(self.req.headers.len()),
-    //         Err(e) => Err(anyhow!("Could not parse header lenght: {}", e)),
-    //     }
-    // }
 
     fn route(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match self.method {
@@ -203,32 +206,20 @@ impl From<String> for Response {
     }
 }
 
-struct GenericResponse {
+struct SerializedResponse {
     value: String,
 }
 
-impl From<Response> for GenericResponse {
+impl From<Response> for SerializedResponse {
     fn from(value: Response) -> Self {
-        let content = format!(
-            r##"
-            <!DOCTYPE html>
-            <html lang="en">
-              <head>
-                <meta charset="utf-8">
-                <title>EDL Generator</title>
-              </head>
-              <body>
-                <p>{}</p>
-              </body>
-            </html>
-        "##,
-            value.content
-        );
-
+        let content = value.content;
         let length = content.len();
         let status_line = value.status_line;
-        GenericResponse {
-            value: format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{content}"),
+
+        SerializedResponse {
+            value: format!(
+                "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{content}"
+            ),
         }
     }
 }

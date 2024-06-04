@@ -2,7 +2,6 @@
 // https://www.edlmax.com/EdlMaxHelp/Edl/maxguide.html
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
 
-use crate::Opt;
 use anyhow::{Context, Error};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -11,6 +10,7 @@ use std::path::Path;
 use vtc::Timecode;
 
 use crate::cut_log::{CutRecord, EditRecord};
+use crate::Opt;
 
 #[derive(Debug)]
 pub struct Edl {
@@ -39,12 +39,12 @@ impl Edl {
             };
         }
 
-        let mut f = BufWriter::new(File::create_new(Path::new(path.as_str()))?);
-        f.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        f.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc.clone())).as_bytes())?;
-        f.flush()?;
+        let mut file = BufWriter::new(File::create_new(Path::new(path.as_str()))?);
+        file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
+        file.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc.clone())).as_bytes())?;
+        file.flush()?;
 
-        Ok(Edl { file: f })
+        Ok(Edl { file })
     }
 
     pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {

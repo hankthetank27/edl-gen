@@ -1,7 +1,8 @@
-use crate::edl::AVChannels;
 use anyhow::{anyhow, Error};
 use std::collections::VecDeque;
 use vtc::Timecode;
+
+use crate::edl::AVChannels;
 
 // for tracking logs in queue.
 // since we have no information about what the out time will be we have to wait
@@ -47,6 +48,13 @@ impl CutLog {
         self.log.front()
     }
 }
+
+impl Default for CutLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum EditRecord {
     Cut,
