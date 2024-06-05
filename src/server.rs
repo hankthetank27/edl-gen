@@ -200,9 +200,8 @@ impl EditRequestData {
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
         let tc = ctx.decode_handlers.recv_frame()?;
-        let tc_str = tc.timecode();
         ctx.frame_queue.push(tc, self)?;
-        Ok(format!("timecode logged: {:#?}", tc_str).into())
+        Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }
 

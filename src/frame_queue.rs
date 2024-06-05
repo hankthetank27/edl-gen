@@ -55,14 +55,14 @@ impl Default for FrameQueue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum EditType {
     Cut,
     Wipe,
     Dissolve,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FrameData {
     pub(crate) edit_number: usize,
     pub(crate) edit_type: EditType,
