@@ -5,13 +5,12 @@
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
 // https://opentimelineio.readthedocs.io/en/latest/api/python/opentimelineio.adapters.cmx_3600.html
 
-use anyhow::{anyhow, Context, Error, Ok};
+use anyhow::{anyhow, Context, Error};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::{u32, usize};
 use vtc::Timecode;
 
 use crate::frame_queue::{EditType, FrameData};
@@ -46,7 +45,7 @@ impl Edl {
 
         let mut file = BufWriter::new(File::create_new(Path::new(path.as_str()))?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        file.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc.clone())).as_bytes())?;
+        file.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
 
         Ok(Edl { file })
@@ -62,7 +61,7 @@ impl Edl {
     }
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum Fcm {
     DropFrame,
     NonDropFrame,
@@ -87,7 +86,7 @@ impl Fcm {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Edit {
     Cut(Clip),
     Dissolve(Dissolve),
@@ -175,11 +174,11 @@ impl<'a> FrameDataPair<'a> {
         Clip {
             edit_number: self.in_.edit_number,
             source_tape: self.in_.source_tape.clone(),
-            av_channels: self.in_.av_channels.clone(),
-            source_in: self.in_.source_tc,
-            source_out: self.out_.source_tc,
-            record_in: self.in_.record_tc,
-            record_out: self.out_.record_tc,
+            av_channels: self.in_.av_channels,
+            source_in: self.in_.timecode,
+            source_out: self.out_.timecode,
+            record_in: self.in_.timecode,
+            record_out: self.out_.timecode,
         }
     }
 
@@ -187,11 +186,11 @@ impl<'a> FrameDataPair<'a> {
         Clip {
             edit_number: self.in_.edit_number,
             source_tape: self.in_.prev_tape.clone(),
-            av_channels: self.in_.av_channels.clone(),
-            source_in: self.in_.source_tc,
-            source_out: self.in_.source_tc,
-            record_in: self.in_.record_tc,
-            record_out: self.in_.record_tc,
+            av_channels: self.in_.av_channels,
+            source_in: self.in_.timecode,
+            source_out: self.in_.timecode,
+            record_in: self.in_.timecode,
+            record_out: self.in_.timecode,
         }
     }
 }
@@ -226,7 +225,7 @@ impl TryFrom<Edit> for String {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct AVChannels {
     video: bool,
     audio: u8,
@@ -241,14 +240,14 @@ impl From<AVChannels> for String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Dissolve {
     from: Clip,
     to: Clip,
     edit_duration_frames: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Wipe {
     from: Clip,
     to: Clip,
@@ -256,7 +255,7 @@ pub struct Wipe {
     edit_duration_frames: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Clip {
     edit_number: usize,
     source_tape: String,
@@ -268,7 +267,7 @@ pub struct Clip {
     //TODO: speed_change
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EdlEditLine {
     edit_number: String,
     edit_duration_frames: String,

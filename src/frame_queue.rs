@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Error};
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use vtc::Timecode;
 
@@ -28,23 +29,12 @@ impl FrameQueue {
         self.log.clear();
     }
 
-    pub fn push(
-        &mut self,
-        timecode: Timecode,
-        edit_data: &EditRequestData,
-        prev_tape: &str,
-    ) -> Result<(), Error> {
-        let record = FrameData::new(
-            timecode,
-            self.count + 1,
-            &edit_data.av_channel,
-            &edit_data.edit_type,
-            &edit_data.source_tape,
-            &prev_tape,
-            &edit_data.edit_duration_frames,
-            &edit_data.wipe_num,
-        )?;
-
+    pub fn push(&mut self, timecode: Timecode, edit_data: &EditRequestData) -> Result<(), Error> {
+        let prev_tape = match self.front() {
+            Some(front) => &front.source_tape,
+            None => &edit_data.source_tape,
+        };
+        let record = FrameData::try_from_req(edit_data, prev_tape, timecode, self.count + 1)?;
         self.count += 1;
         self.log.push_back(record);
         Ok(())
@@ -72,54 +62,40 @@ pub enum EditType {
     Dissolve,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FrameData {
     pub(crate) edit_number: usize,
     pub(crate) edit_type: EditType,
     pub(crate) source_tape: String,
     pub(crate) prev_tape: String,
     pub(crate) av_channels: AVChannels,
-    pub(crate) source_tc: Timecode,
-    pub(crate) record_tc: Timecode,
+    pub(crate) timecode: Timecode,
     pub(crate) edit_duration_frames: Option<u32>,
     pub(crate) wipe_num: Option<u32>,
 }
 
 impl FrameData {
-    pub fn new(
+    pub fn try_from_req(
+        req: &EditRequestData,
+        prev_tape: &str,
         timecode: Timecode,
         edit_number: usize,
-        av_channels: &AVChannels,
-        edit_type: &str,
-        source_tape: &str,
-        prev_tape: &str,
-        edit_duration_frames: &Option<u32>,
-        wipe_num: &Option<u32>,
     ) -> Result<Self, Error> {
-        let edit_type: EditType = edit_type.try_into()?;
+        let edit_type: EditType = req.edit_type.as_str().try_into()?;
         let edit_duration_frames =
-            FrameData::validate_edit_type_duration(&edit_type, edit_duration_frames)?;
-        let wipe_num = FrameData::validate_wipe_num(&edit_type, wipe_num)?;
+            FrameData::validate_edit_type_duration(&edit_type, &req.edit_duration_frames)?;
+        let wipe_num = FrameData::validate_wipe_num(&edit_type, &req.wipe_num)?;
 
         Ok(FrameData {
-            source_tape: source_tape.to_string(),
-            prev_tape: prev_tape.to_string(),
-            av_channels: av_channels.clone(),
-            source_tc: timecode,
-            record_tc: timecode,
+            source_tape: FrameData::validate_tape_name(&req.source_tape)?,
+            prev_tape: FrameData::validate_tape_name(prev_tape)?,
+            av_channels: req.av_channels,
+            timecode,
             edit_type,
             edit_number,
             edit_duration_frames,
             wipe_num,
         })
-    }
-
-    pub fn source_timecode(&self) -> String {
-        self.source_tc.timecode()
-    }
-
-    pub fn edit_number(&self) -> usize {
-        self.edit_number
     }
 
     fn validate_edit_type_duration(
@@ -148,6 +124,13 @@ impl FrameData {
         match edit_type {
             e @ EditType::Wipe => wipe_num.map_or_else(|| Err(err_fn(e)), |n| Ok(Some(n))),
             _ => Ok(None),
+        }
+    }
+
+    fn validate_tape_name(source_tape: &str) -> Result<String, Error> {
+        match source_tape.len().cmp(&8) {
+            Ordering::Greater => Err(anyhow!("Tape name cannot exceed 8 charaters")),
+            _ => Ok(source_tape.to_string()),
         }
     }
 }

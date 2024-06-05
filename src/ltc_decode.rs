@@ -21,16 +21,17 @@ impl<'a> LTCListener<'a> {
     pub fn new(opt: &'a Opt) -> Result<Self, Error> {
         let device = cpal::default_host()
             .default_input_device()
-            .expect("failed to find input device");
+            .context("failed to find input device")?;
 
         let config = device
             .default_input_config()
-            .expect("Failed to get default input config");
+            .context("Failed to get default input config")?;
 
         if opt.input_channel as u16 > config.channels() {
             return Err(anyhow!(
-                "Invalid input channel: {}. Cannot exceed available channels on device: {}",
+                "Invalid input channel: {}. Cannot exceed available channels on device {} with {} channels",
                 opt.input_channel,
+                device.name()?,
                 config.channels()
             ));
         }
@@ -131,7 +132,7 @@ impl<'a> LTCListener<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct InputChannel {
     channel: usize,
     device_channels: usize,
@@ -251,14 +252,6 @@ impl<'a> DecodeHandlers<'a> {
     pub fn recv_frame(&self) -> Result<Timecode, DecodeErr> {
         Ok(self.frame_recv.recv()?.into_timecode(self.opt)?)
     }
-
-    // pub fn try_recv_frame(&self) -> Result<LTCFrame, Error> {
-    //     self.frame_recv.try_recv().context("Frame unavailable")
-    // }
-
-    // pub fn recv_frame(&self) -> Result<LTCFrame, Error> {
-    //     self.frame_recv.recv().context("Frame unavailable")
-    // }
 
     pub fn decode_on(&self) -> Result<(), Error> {
         self.decode_state_sender

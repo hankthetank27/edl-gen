@@ -171,11 +171,10 @@ impl<'r> Request<'r> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EditRequestData {
     pub(crate) edit_type: String,
-    //for cuts and dissolves
     pub(crate) edit_duration_frames: Option<u32>,
     pub(crate) wipe_num: Option<u32>,
     pub(crate) source_tape: String,
-    pub(crate) av_channel: AVChannels,
+    pub(crate) av_channels: AVChannels,
 }
 
 impl EditRequestData {
@@ -189,15 +188,7 @@ impl EditRequestData {
 
     fn parse_edit_from_log(&self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
         let tc = ctx.decode_handlers.try_recv_frame()?;
-        let prev_tape = ctx
-            .frame_queue
-            .front()
-            .context("No value in frame_queue")?
-            .source_tape
-            .clone();
-
-        ctx.frame_queue.push(tc, self, &prev_tape)?;
-
+        ctx.frame_queue.push(tc, self)?;
         let prev_record = ctx.frame_queue.pop().context("No value in frame_queue")?;
         let curr_record = ctx.frame_queue.front().context("No value in frame_queue")?;
 
@@ -209,8 +200,9 @@ impl EditRequestData {
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
         let tc = ctx.decode_handlers.recv_frame()?;
-        ctx.frame_queue.push(tc, self, &self.source_tape)?;
-        Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
+        let tc_str = tc.timecode();
+        ctx.frame_queue.push(tc, self)?;
+        Ok(format!("timecode logged: {:#?}", tc_str).into())
     }
 }
 
