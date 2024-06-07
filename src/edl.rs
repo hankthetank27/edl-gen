@@ -73,7 +73,7 @@ impl From<Fcm> for String {
             Fcm::DropFrame => "DROP FRAME",
             Fcm::NonDropFrame => "NON-DROP FRAME",
         }
-        .to_string()
+        .into()
     }
 }
 
@@ -95,10 +95,10 @@ pub enum Edit {
 
 impl Edit {
     fn get_strs(&self) -> Result<(String, String), Error> {
-        let c = "C   ".to_string();
-        let d = "D   ".to_string();
+        let c = "C   ".into();
+        let d = "D   ".into();
         match self {
-            Edit::Cut(_) => Ok((c, "".to_string())),
+            Edit::Cut(_) => Ok((c, "".into())),
             Edit::Dissolve(_) => Ok((c, d)),
             Edit::Wipe(w) => {
                 let num_str = validate_num_size(w.wipe_number)?;
@@ -289,7 +289,7 @@ impl EdlEditLine {
     ) -> Result<Self, Error> {
         let edit_duration_frames = match edit_duration_frames {
             Some(n) => validate_num_size(n)?,
-            None => "   ".to_string(),
+            None => "   ".into(),
         };
 
         Ok(EdlEditLine {

@@ -9,13 +9,13 @@ use crate::frame_queue::FrameQueue;
 use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
 use crate::Opt;
 
-pub struct Server<'a> {
+pub struct Server<'prgm> {
     port: String,
-    opt: &'a Opt,
+    opt: &'prgm Opt,
 }
 
-impl<'a> Server<'a> {
-    pub fn new(opt: &'a Opt) -> Self {
+impl<'prgm> Server<'prgm> {
+    pub fn new(opt: &'prgm Opt) -> Self {
         Server {
             port: format!("127.0.0.1:{}", opt.port),
             opt,
@@ -54,7 +54,7 @@ impl<'a> Server<'a> {
                     eprintln!("Error processing request: {:#}", e);
                     server_err()
                 })
-                .parse_to_json()?
+                .json()?
                 .into();
 
         stream.write_all(res.value.as_bytes())?;
@@ -84,9 +84,9 @@ impl Response {
         }
     }
 
-    fn parse_to_json(mut self) -> Result<Self, Error> {
-        self.content =
-            serde_json::to_string(&self.content).context("Could not parse HTTP Response")?;
+    fn json(mut self) -> Result<Self, Error> {
+        self.content = serde_json::to_string(&self.content)
+            .context("Could not parse HTTP Response to JSON")?;
         Ok(self)
     }
 }
@@ -100,20 +100,20 @@ pub struct Request<'req> {
     buffer: &'req [u8],
 }
 
-impl<'r> Request<'r> {
-    fn new(req: &'r mut ReqParser<'r, 'r>, buffer: &'r [u8]) -> Result<Self, Error> {
-        let header_offset = match req.parse(buffer) {
+impl<'req> Request<'req> {
+    fn new(req_parser: &'req mut ReqParser<'req, 'req>, buffer: &'req [u8]) -> Result<Self, Error> {
+        let header_offset = match req_parser.parse(buffer) {
             Ok(Status::Complete(header_offset)) => Ok(header_offset),
 
             //TODO: this is funky. try with firefox and see.
-            Ok(Status::Partial) => Ok(req.headers.len()),
+            Ok(Status::Partial) => Ok(req_parser.headers.len()),
             Err(e) => Err(anyhow!("Could not parse header lenght: {}", e)),
         }?;
 
         Ok(Request {
-            headers: req.headers,
-            method: req.method,
-            path: req.path,
+            headers: req_parser.headers,
+            method: req_parser.method,
+            path: req_parser.path,
             header_offset,
             buffer,
         })
@@ -207,7 +207,7 @@ impl EditRequestData {
 
 impl From<String> for Response {
     fn from(value: String) -> Self {
-        Response::new(value, "HTTP/1.1 200 OK".to_string())
+        Response::new(value, "HTTP/1.1 200 OK".into())
     }
 }
 
@@ -231,22 +231,18 @@ impl From<Response> for SerializedResponse {
 
 fn frame_unavailable() -> Response {
     Response::new(
-        "Unable to get timecode. Make sure source is streaming and decoding has started."
-            .to_string(),
-        "HTTP/1.1 200 OK".to_string(),
+        "Unable to get timecode. Make sure source is streaming and decoding has started.".into(),
+        "HTTP/1.1 200 OK".into(),
     )
 }
 
 fn server_err() -> Response {
     Response::new(
-        "Failed to parse request".to_string(),
-        "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string(),
+        "Failed to parse request".into(),
+        "HTTP/1.1 500 INTERNAL SERVER ERROR".into(),
     )
 }
 
 fn not_found() -> Response {
-    Response::new(
-        "Command not found".to_string(),
-        "HTTP/1.1 404 NOT FOUND".to_string(),
-    )
+    Response::new("Command not found".into(), "HTTP/1.1 404 NOT FOUND".into())
 }

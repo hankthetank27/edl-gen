@@ -158,3 +158,8 @@ impl From<&EditType> for String {
         .to_string()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+}
