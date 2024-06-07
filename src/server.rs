@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
+use egui::mutex::Mutex;
 use httparse::{Request as ReqParser, Status};
 use serde::{Deserialize, Serialize};
 use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
+use std::sync::{mpsc, Arc};
 
 use crate::edl::{AVChannels, Edit, Edl, FrameDataPair};
 use crate::frame_queue::FrameQueue;
@@ -10,36 +12,43 @@ use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
 use crate::Opt;
 
 pub struct Server<'prgm> {
-    port: String,
+    host: String,
     opt: &'prgm Opt,
 }
 
 impl<'prgm> Server<'prgm> {
     pub fn new(opt: &'prgm Opt) -> Self {
         Server {
-            port: format!("127.0.0.1:{}", opt.port),
+            host: format!("127.0.0.1:{}", opt.port),
             opt,
         }
     }
 
-    pub fn listen(&mut self) -> Result<(), Error> {
+    pub fn listen(&mut self, rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>) -> Result<(), Error> {
         let listener =
-            TcpListener::bind(&self.port).context("Server could not initate TCP connection")?;
+            TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
         let mut ctx = Context {
             decode_handlers: LTCListener::new(self.opt)?.listen(),
             edl: Edl::new(self.opt)?,
             frame_queue: FrameQueue::new(),
         };
 
-        println!("listening on {}", &self.port);
+        println!("listening on {}", &self.host);
 
         for stream in listener.incoming() {
             self.handle_connection(stream?, &mut ctx)
                 .unwrap_or_else(|e| {
                     eprintln!("Request could not be sent: {:#}", e);
                 });
+
+            match rx_stop_serv.lock().try_recv() {
+                Ok(_) => break,
+                Err(mpsc::TryRecvError::Empty) => continue,
+                Err(e) => eprint!("Unable to read halt server message: {}", e),
+            }
         }
 
+        println!("Goodbye!");
         Ok(())
     }
 
@@ -58,7 +67,6 @@ impl<'prgm> Server<'prgm> {
                 .into();
 
         stream.write_all(res.value.as_bytes())?;
-
         Ok(())
     }
 }
@@ -140,6 +148,10 @@ impl<'req> Request<'req> {
                 Some("/log") => self.body()?.try_log_edit(ctx),
                 _ => Ok(not_found()),
             },
+            Some("GET") => match self.path {
+                Some("/SIGKILL") => Ok("SIGKILL".to_string().into()),
+                _ => Ok(not_found()),
+            },
             _ => Ok(not_found()),
         }
     }
@@ -207,7 +219,7 @@ impl EditRequestData {
 
 impl From<String> for Response {
     fn from(value: String) -> Self {
-        Response::new(value, "HTTP/1.1 200 OK".into())
+        Response::new(value, "HTTP/1.1 200 OK".to_string())
     }
 }
 

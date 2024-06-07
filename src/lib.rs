@@ -6,23 +6,21 @@ pub mod ltc_decode;
 pub mod server;
 pub mod single_val_channel;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(version, about = "Generate EDL", long_about = None)]
 pub struct Opt {
     #[arg(short, long, default_value = "my-video")]
-    title: String,
+    pub title: String,
     #[arg(short, long, default_value = "./edl-dump")]
-    dir: String,
+    pub dir: String,
     #[arg(short, long, default_value_t = 1)]
-    input_channel: usize,
+    pub input_channel: usize,
     #[arg(short, long, default_value_t = 23.976)]
-    fps: f32,
+    pub fps: f32,
     #[arg(short, long, default_value_t = 480000.0)]
-    sample_rate: f32,
+    pub sample_rate: f32,
     #[arg(short, long, value_enum, default_value_t = edl::Fcm::NonDropFrame)]
-    ntsc: edl::Fcm,
-
-    /// Webserver
+    pub ntsc: edl::Fcm,
     #[arg(short, long, default_value_t = 6969)]
-    port: usize,
+    pub port: usize,
 }
