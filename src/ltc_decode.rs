@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{Device, SupportedStreamConfig};
 use ltc::{LTCDecoder, LTCFrame};
 use num::cast::AsPrimitive;
 use std::collections::VecDeque;
@@ -10,22 +11,16 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 use crate::single_val_channel::{self, ChannelErr};
 use crate::Opt;
 
-pub struct LTCListener<'a> {
+pub struct LTCListener {
     config: cpal::SupportedStreamConfig,
     device: cpal::Device,
     input_channel: InputChannel,
-    opt: &'a Opt,
+    opt: Opt,
 }
 
-impl<'a> LTCListener<'a> {
-    pub fn new(opt: &'a Opt) -> Result<Self, Error> {
-        let device = cpal::default_host()
-            .default_input_device()
-            .context("failed to find input device")?;
-
-        let config = device
-            .default_input_config()
-            .context("Failed to get default input config")?;
+impl LTCListener {
+    pub fn new(opt: Opt) -> Result<Self, Error> {
+        let (config, device) = LTCListener::get_default_config()?;
 
         if opt.input_channel as u16 > config.channels() {
             return Err(anyhow!(
@@ -41,7 +36,7 @@ impl<'a> LTCListener<'a> {
             device_channels: config.channels() as usize,
         };
 
-        println!(
+        log::info!(
             "Input device: {}, Input channel: {}",
             device.name()?,
             opt.input_channel
@@ -55,7 +50,17 @@ impl<'a> LTCListener<'a> {
         })
     }
 
-    pub fn listen(self) -> DecodeHandlers<'a> {
+    pub fn get_default_config() -> Result<(SupportedStreamConfig, Device), Error> {
+        let device = cpal::default_host()
+            .default_input_device()
+            .context("failed to find input device")?;
+        let config = device
+            .default_input_config()
+            .context("Failed to get default input config")?;
+        Ok((config, device))
+    }
+
+    pub fn listen(self) -> DecodeHandlers {
         let (frame_sender, frame_recv) = single_val_channel::channel::<LTCFrame>();
         let (decode_state_sender, decode_state_recv) = mpsc::channel::<DecodeState>();
         let (stop_listen_sender, stop_listen_recv) = mpsc::channel::<()>();
@@ -63,13 +68,13 @@ impl<'a> LTCListener<'a> {
         let mut ctx = DecodeContext::new(
             frame_recv.clone(),
             decode_state_recv,
-            frame_sender,
+            frame_sender.clone(),
             self.samples_per_frame(),
             self.input_channel,
         );
 
         thread::spawn(move || -> Result<(), Error> {
-            let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+            let err_fn = |err| log::error!("an error occurred on stream: {}", err);
             let stream = match self.config.sample_format() {
                 cpal::SampleFormat::I8 => self
                     .device
@@ -115,11 +120,12 @@ impl<'a> LTCListener<'a> {
             stream.play()?;
             stop_listen_recv.recv()?;
 
-            println!("Stopped listening for LTC");
+            log::info!("Stopped listening for LTC");
             Ok(())
         });
 
         DecodeHandlers::new(
+            frame_sender,
             frame_recv,
             decode_state_sender,
             stop_listen_sender,
@@ -128,7 +134,7 @@ impl<'a> LTCListener<'a> {
     }
 
     fn samples_per_frame(&self) -> f32 {
-        self.opt.sample_rate / self.opt.fps
+        self.opt.sample_rate as f32 / self.opt.fps
     }
 }
 
@@ -185,7 +191,7 @@ impl DecodeContext {
                 Some(tc) => {
                     self.iters_since_last_decode = 0;
                     if let Err(e) = self.frame_sender.send(tc) {
-                        eprint!("Error setting current frame state: {}", e);
+                        log::error!("Error setting current frame state: {}", e);
                     };
                 }
                 None => {
@@ -223,21 +229,24 @@ impl DecodeContext {
 }
 
 #[derive(Debug)]
-pub struct DecodeHandlers<'a> {
-    frame_recv: single_val_channel::Receiver<LTCFrame>,
-    decode_state_sender: mpsc::Sender<DecodeState>,
-    stop_listen_sender: mpsc::Sender<()>,
-    opt: &'a Opt,
+pub struct DecodeHandlers {
+    pub frame_sender: single_val_channel::Sender<LTCFrame>,
+    pub frame_recv: single_val_channel::Receiver<LTCFrame>,
+    pub decode_state_sender: mpsc::Sender<DecodeState>,
+    pub stop_listen_sender: mpsc::Sender<()>,
+    opt: Opt,
 }
 
-impl<'a> DecodeHandlers<'a> {
+impl DecodeHandlers {
     fn new(
+        frame_sender: single_val_channel::Sender<LTCFrame>,
         frame_recv: single_val_channel::Receiver<LTCFrame>,
         decode_state_sender: mpsc::Sender<DecodeState>,
         stop_listen_sender: mpsc::Sender<()>,
-        opt: &'a Opt,
+        opt: Opt,
     ) -> Self {
         DecodeHandlers {
+            frame_sender,
             frame_recv,
             decode_state_sender,
             stop_listen_sender,
@@ -246,11 +255,11 @@ impl<'a> DecodeHandlers<'a> {
     }
 
     pub fn try_recv_frame(&self) -> Result<Timecode, DecodeErr> {
-        Ok(self.frame_recv.try_recv()?.into_timecode(self.opt)?)
+        Ok(self.frame_recv.try_recv()?.into_timecode(&self.opt)?)
     }
 
     pub fn recv_frame(&self) -> Result<Timecode, DecodeErr> {
-        Ok(self.frame_recv.recv()?.into_timecode(self.opt)?)
+        Ok(self.frame_recv.recv()?.into_timecode(&self.opt)?)
     }
 
     pub fn decode_on(&self) -> Result<(), Error> {

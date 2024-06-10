@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::Path;
 use vtc::Timecode;
 
 use crate::frame_queue::{EditType, FrameData};
@@ -23,18 +22,22 @@ pub struct Edl {
 
 impl Edl {
     pub fn new(opt: &Opt) -> Result<Self, Error> {
-        if !Path::new(&opt.dir).exists() {
-            std::fs::create_dir_all(&opt.dir)?;
-        }
+        // if !Path::new(&opt.dir).exists() {
+        //     std::fs::create_dir_all(&opt.dir)?;
+        // }
 
-        let make_path = |n: Option<u32>| match n {
-            Some(n) => format!("{}/{}({}).edl", opt.dir, opt.title, n),
-            None => format!("{}/{}.edl", opt.dir, opt.title),
+        let make_path = |n: Option<u32>| {
+            let mut path = opt.dir.clone();
+            match n {
+                Some(n) => path.push(format!("{}({}).edl", opt.title, n)),
+                None => path.push(format!("{}.edl", opt.title)),
+            };
+            path
         };
 
         let mut path = make_path(None);
         for i in 1.. {
-            match Path::new(path.as_str())
+            match path
                 .try_exists()
                 .context("could not deterimine if file is safe to write")?
             {
@@ -43,25 +46,24 @@ impl Edl {
             };
         }
 
-        let mut file = BufWriter::new(File::create_new(Path::new(path.as_str()))?);
+        let mut file = BufWriter::new(File::create_new(path)?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        file.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc)).as_bytes())?;
+        file.write_all(format!("FCM: {}\n", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
 
         Ok(Edl { file })
     }
 
     pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
-        let mut edit_str: String = edit.try_into()?;
-        edit_str.push('\n');
+        let edit_str: String = edit.try_into()?;
         self.file.write_all(edit_str.as_bytes())?;
         self.file.flush()?;
-        println!("Edit Logged: \n{}", edit_str);
+        log::info!("Edit Logged: \n{}", edit_str);
         Ok(edit_str)
     }
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Fcm {
     DropFrame,
     NonDropFrame,
