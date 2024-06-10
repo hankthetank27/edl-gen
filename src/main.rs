@@ -74,6 +74,8 @@ impl AppGui {
         };
         self.tx_stop_serv.send(())?;
 
+        //TODO: find a better way to determine if the server has already been killed by another
+        //request waiting
         let host = format!("127.0.0.1:{}", self.opt.port);
         if let Ok(mut stream) = TcpStream::connect(&host) {
             let request = format!(
@@ -243,6 +245,7 @@ impl eframe::App for AppGui {
 
                             logs_displayed += 1;
                         });
+                        ctx.request_repaint();
                     });
                 });
         });

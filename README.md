@@ -13,6 +13,7 @@ EzEDL is very much a work in progress at the moment. To get up and running you c
 Coming soon...
 
 ### TODO: ###
-- GUI Version
-- Handle Speed Changes
-- BitFocus Companion Module
+- Improve logging (colors formating etc)
+- Save settings
+- Handle speed changes
+- BitFocus Companion module
