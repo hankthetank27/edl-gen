@@ -1,4 +1,7 @@
-use clap::Parser;
+use log::{LevelFilter, SetLoggerError};
+
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 pub mod edl;
 pub mod frame_queue;
@@ -6,21 +9,85 @@ pub mod ltc_decode;
 pub mod server;
 pub mod single_val_channel;
 
-#[derive(Parser, Debug, Clone)]
-#[command(version, about = "Generate EDL", long_about = None)]
+type GlobalLog = Vec<(log::Level, String)>;
+
+pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
+
+pub struct Logger;
+
+impl Logger {
+    pub fn init() -> Result<(), SetLoggerError> {
+        log::set_logger(&Logger).map(|()| log::set_max_level(LevelFilter::Info))
+    }
+
+    fn try_mut_log<F, T>(f: F) -> Option<T>
+    where
+        F: FnOnce(&mut GlobalLog) -> T,
+    {
+        match LOG.lock() {
+            Ok(ref mut global_log) => Some((f)(global_log)),
+            Err(_) => None,
+        }
+    }
+
+    pub fn try_get_log<F, T>(f: F) -> Option<T>
+    where
+        F: FnOnce(&GlobalLog) -> T,
+    {
+        match LOG.lock() {
+            Ok(ref global_log) => Some((f)(global_log)),
+            Err(_) => None,
+        }
+    }
+}
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::STATIC_MAX_LEVEL
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            match record.level() {
+                log::Level::Error => eprintln!("{}", record.args()),
+                _ => println!("{}", record.args()),
+            };
+            Logger::try_mut_log(|logs| logs.push((record.level(), record.args().to_string())));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+#[derive(Debug, Clone)]
 pub struct Opt {
-    #[arg(short, long, default_value = "my-video")]
     pub title: String,
-    #[arg(short, long, default_value = "./edl-dump")]
-    pub dir: String,
-    #[arg(short, long, default_value_t = 1)]
-    pub input_channel: usize,
-    #[arg(short, long, default_value_t = 23.976)]
-    pub fps: f32,
-    #[arg(short, long, default_value_t = 480000.0)]
-    pub sample_rate: f32,
-    #[arg(short, long, value_enum, default_value_t = edl::Fcm::NonDropFrame)]
-    pub ntsc: edl::Fcm,
-    #[arg(short, long, default_value_t = 6969)]
+    pub dir: PathBuf,
     pub port: usize,
+    pub input_channel: usize,
+    pub sample_rate: usize,
+    pub fps: f32,
+    pub ntsc: edl::Fcm,
+}
+
+impl Opt {
+    fn make_default_dir() -> PathBuf {
+        let mut dir = dirs::home_dir().unwrap();
+        dir.push("Desktop");
+        dir
+    }
+}
+
+impl Default for Opt {
+    fn default() -> Self {
+        Self {
+            title: "my-video".into(),
+            dir: Opt::make_default_dir(),
+            port: 6969,
+            input_channel: 1,
+            sample_rate: 44100,
+            fps: 23.976,
+            ntsc: edl::Fcm::NonDropFrame,
+        }
+    }
 }

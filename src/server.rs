@@ -8,88 +8,108 @@ use std::sync::{mpsc, Arc};
 
 use crate::edl::{AVChannels, Edit, Edl, FrameDataPair};
 use crate::frame_queue::FrameQueue;
-use crate::ltc_decode::{DecodeErr, DecodeHandlers, LTCListener};
+use crate::ltc_decode::{DecodeErr, DecodeHandlers};
 use crate::Opt;
 
-pub struct Server<'prgm> {
+pub struct Server {
     host: String,
-    opt: &'prgm Opt,
+    opt: Opt,
 }
 
-impl<'prgm> Server<'prgm> {
-    pub fn new(opt: &'prgm Opt) -> Self {
+impl Server {
+    pub fn new(opt: Opt) -> Self {
         Server {
             host: format!("127.0.0.1:{}", opt.port),
             opt,
         }
     }
 
-    pub fn listen(&mut self, rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>) -> Result<(), Error> {
+    pub fn listen(
+        &mut self,
+        rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
+        decode_handlers: DecodeHandlers,
+    ) -> Result<(), Error> {
         let listener =
             TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
         let mut ctx = Context {
-            decode_handlers: LTCListener::new(self.opt)?.listen(),
-            edl: Edl::new(self.opt)?,
+            decode_handlers,
+            edl: Edl::new(&self.opt)?,
             frame_queue: FrameQueue::new(),
         };
 
-        println!("listening on {}", &self.host);
+        log::info!("Listening on {}", &self.host);
 
         for stream in listener.incoming() {
             self.handle_connection(stream?, &mut ctx)
                 .unwrap_or_else(|e| {
-                    eprintln!("Request could not be sent: {:#}", e);
+                    log::error!("Request could not be sent: {:#}", e);
+                    StatusCode::S500
                 });
 
             match rx_stop_serv.lock().try_recv() {
                 Ok(_) => break,
                 Err(mpsc::TryRecvError::Empty) => continue,
-                Err(e) => eprint!("Unable to read halt server message: {}", e),
+                Err(e) => log::error!("Unable to read halt server message: {}", e),
             }
+
+            // match res {
+            //     StatusCode::S418 => break,
+            //     _ => continue,
+            // }
         }
 
-        println!("Goodbye!");
+        log::info!("Goodbye!");
         Ok(())
     }
 
-    fn handle_connection(&mut self, mut stream: TcpStream, ctx: &mut Context) -> Result<(), Error> {
+    fn handle_connection(
+        &mut self,
+        mut stream: TcpStream,
+        ctx: &mut Context,
+    ) -> Result<StatusCode, Error> {
         let mut buf_reader = BufReader::new(&mut stream);
         let mut headers = [httparse::EMPTY_HEADER; 16];
 
-        let res: SerializedResponse =
+        let res: Response =
             Request::new(&mut ReqParser::new(&mut headers), buf_reader.fill_buf()?)?
                 .route(ctx)
                 .unwrap_or_else(|e| {
-                    eprintln!("Error processing request: {:#}", e);
+                    log::error!("Error processing request: {:#}", e);
                     server_err()
                 })
-                .json()?
-                .into();
+                .json()?;
 
-        stream.write_all(res.value.as_bytes())?;
-        Ok(())
+        let status = res.status;
+        stream.write_all(SerializedResponse::from(res).value.as_bytes())?;
+
+        Ok(status)
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum StatusCode {
+    S200,
+    S404,
+    S418,
+    S500,
+}
+
 #[derive(Debug)]
-pub struct Context<'serv> {
+pub struct Context {
     frame_queue: FrameQueue,
-    decode_handlers: DecodeHandlers<'serv>,
+    decode_handlers: DecodeHandlers,
     edl: Edl,
 }
 
 #[derive(Debug)]
 struct Response {
     content: String,
-    status_line: String,
+    status: StatusCode,
 }
 
 impl Response {
-    fn new(content: String, status_line: String) -> Self {
-        Response {
-            content,
-            status_line,
-        }
+    fn new(content: String, status: StatusCode) -> Self {
+        Response { content, status }
     }
 
     fn json(mut self) -> Result<Self, Error> {
@@ -133,9 +153,7 @@ impl<'req> Request<'req> {
                 Some("/start") => {
                     ctx.decode_handlers.decode_on()?;
                     ctx.frame_queue.clear();
-                    println!("wating for audio...");
                     let mut response = self.body()?.wait_for_first_frame(ctx)?;
-                    println!("ready!");
                     response.content = format!("Started decoding. {}", response.content);
                     Ok(response)
                 }
@@ -149,7 +167,7 @@ impl<'req> Request<'req> {
                 _ => Ok(not_found()),
             },
             Some("GET") => match self.path {
-                Some("/SIGKILL") => Ok("SIGKILL".to_string().into()),
+                Some("/SIGKILL") => Ok(kill_server()),
                 _ => Ok(not_found()),
             },
             _ => Ok(not_found()),
@@ -211,15 +229,21 @@ impl EditRequestData {
     }
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
-        let tc = ctx.decode_handlers.recv_frame()?;
+        log::info!("wating for audio...");
+        let tc = match ctx.decode_handlers.recv_frame() {
+            Ok(f) => f,
+            Err(DecodeErr::NoVal(_)) => return Ok(format!("Exiting...").into()),
+            Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
+        };
         ctx.frame_queue.push(tc, self)?;
+        log::info!("ready!");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }
 
 impl From<String> for Response {
     fn from(value: String) -> Self {
-        Response::new(value, "HTTP/1.1 200 OK".to_string())
+        Response::new(value, StatusCode::S200)
     }
 }
 
@@ -231,7 +255,7 @@ impl From<Response> for SerializedResponse {
     fn from(value: Response) -> Self {
         let content = value.content;
         let length = content.len();
-        let status_line = value.status_line;
+        let status_line = String::from(value.status);
 
         SerializedResponse {
             value: format!(
@@ -241,20 +265,33 @@ impl From<Response> for SerializedResponse {
     }
 }
 
+impl From<StatusCode> for String {
+    fn from(value: StatusCode) -> Self {
+        match value {
+            StatusCode::S200 => "200 OK",
+            StatusCode::S404 => "404 NOT FOUND",
+            StatusCode::S418 => "418 I'M A TEAPOT",
+            StatusCode::S500 => "500 INTERNAL SERVER ERROR",
+        }
+        .to_string()
+    }
+}
+
+fn kill_server() -> Response {
+    Response::new("Exiting...".into(), StatusCode::S418)
+}
+
 fn frame_unavailable() -> Response {
     Response::new(
         "Unable to get timecode. Make sure source is streaming and decoding has started.".into(),
-        "HTTP/1.1 200 OK".into(),
+        StatusCode::S200,
     )
 }
 
 fn server_err() -> Response {
-    Response::new(
-        "Failed to parse request".into(),
-        "HTTP/1.1 500 INTERNAL SERVER ERROR".into(),
-    )
+    Response::new("Failed to parse request".into(), StatusCode::S500)
 }
 
 fn not_found() -> Response {
-    Response::new("Command not found".into(), "HTTP/1.1 404 NOT FOUND".into())
+    Response::new("Command not found".into(), StatusCode::S404)
 }

@@ -1,7 +1,10 @@
 use std::{
     error::Error,
     fmt,
-    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, MutexGuard, PoisonError,
+    },
 };
 
 #[derive(Debug)]
@@ -40,6 +43,7 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
 pub struct Context<T> {
     value: Mutex<Option<T>>,
     cvar: Condvar,
+    closed: AtomicBool,
 }
 
 impl<T> Context<T> {
@@ -47,6 +51,7 @@ impl<T> Context<T> {
         Self {
             value: Mutex::new(None),
             cvar: Condvar::new(),
+            closed: AtomicBool::new(false),
         }
     }
 }
@@ -67,6 +72,11 @@ impl<T> Sender<T> {
         self.0.cvar.notify_all();
         Ok(())
     }
+
+    pub fn hangup(&self) {
+        self.0.closed.swap(true, Ordering::Relaxed);
+        self.0.cvar.notify_all()
+    }
 }
 
 impl<T> Clone for Sender<T> {
@@ -84,11 +94,13 @@ impl<T> Receiver<T> {
         guard.take().ok_or(ChannelErr::NoVal)
     }
 
-    // TODO: see call in server
     pub fn recv(&self) -> Result<T, ChannelErr> {
         let mut guard = self.0.value.lock()?;
         while guard.is_none() {
             guard = self.0.cvar.wait(guard)?;
+            if self.0.closed.load(Ordering::Relaxed) {
+                return Err(ChannelErr::NoVal);
+            }
         }
         Ok(guard.take().unwrap())
     }
