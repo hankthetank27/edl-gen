@@ -12,6 +12,7 @@ use std::io::prelude::*;
 use std::net::TcpStream;
 use std::sync::{mpsc, Arc};
 use std::thread;
+use std::thread::JoinHandle;
 use std::usize;
 
 fn main() -> Result<(), Error> {
@@ -35,26 +36,30 @@ fn main() -> Result<(), Error> {
 
 struct AppGui {
     opt: Opt,
-    is_listening: bool,
     rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
     tx_stop_serv: mpsc::Sender<()>,
+    tx_serv_stopped: mpsc::Sender<()>,
+    rx_serv_stopped: mpsc::Receiver<()>,
     tx_decode_ltc: Option<single_val_channel::Sender<LTCFrame>>,
+    server_handle: Option<JoinHandle<Result<(), Error>>>,
 }
 
 impl AppGui {
     fn new() -> Self {
         let (tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
+        let (tx_serv_stopped, rx_serv_stopped) = mpsc::channel::<()>();
         AppGui {
             opt: Opt::default(),
-            is_listening: false,
+            server_handle: None,
             rx_stop_serv: Arc::new(Mutex::new(rx_stop_serv)),
             tx_decode_ltc: None,
             tx_stop_serv,
+            tx_serv_stopped,
+            rx_serv_stopped,
         }
     }
 
     fn spawn_server(&mut self) {
-        let rx_stop_serv = Arc::clone(&self.rx_stop_serv);
         let decode_handlers = match LTCListener::new(self.opt.clone()) {
             Ok(listener) => listener.listen(),
             Err(e) => {
@@ -62,36 +67,57 @@ impl AppGui {
                 return;
             }
         };
-
-        self.tx_decode_ltc = Some(decode_handlers.frame_sender.clone());
         let opt = self.opt.clone();
-        thread::spawn(move || Server::new(opt).listen(rx_stop_serv, decode_handlers));
-        self.is_listening = true;
+        let rx_stop_serv = Arc::clone(&self.rx_stop_serv);
+        let tx_serv_stopped = self.tx_serv_stopped.clone();
+        self.tx_decode_ltc = Some(decode_handlers.frame_sender.clone());
+        self.server_handle = Some(thread::spawn(move || {
+            Server::new(opt).listen(rx_stop_serv, tx_serv_stopped, decode_handlers)
+        }));
     }
 
     fn kill_server(&mut self) -> Result<(), Error> {
-        if let Some(handle) = self.tx_decode_ltc.as_ref() {
-            handle.hangup();
-        };
-        self.tx_stop_serv.send(())?;
-
-        //TODO: find a better way to determine if the server has already been killed by another
-        //request waiting
-        let host = format!("127.0.0.1:{}", self.opt.port);
-        if let Ok(mut stream) = TcpStream::connect(&host) {
-            let request = format!(
-                "GET /SIGKILL HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                host
-            );
-
-            stream.write_all(request.as_bytes())?;
-
-            let mut response = String::new();
-            stream.read_to_string(&mut response)?;
-        };
-
-        self.is_listening = false;
-        Ok(())
+        match self.server_handle.take() {
+            Some(handle) => {
+                self.tx_stop_serv.send(())?;
+                if let Some(decode_ltc) = self.tx_decode_ltc.as_ref() {
+                    decode_ltc.hangup();
+                };
+                // If the thread hasnt received the "shutdown" message, we will attempt to connect
+                // to the server to advance to the next incoming stream in case its still waiting.
+                // It is possible this process has already begun in which case the request will
+                // fail. To handle this we supress the errors from attempting to connect and
+                // instead check if we have received a message that the server has been shutdown to
+                // indicate if the process has succeeded.
+                if !handle.is_finished() {
+                    let signal_shutdown = || -> Result<(), Error> {
+                        let host = format!("127.0.0.1:{}", self.opt.port);
+                        let mut stream = TcpStream::connect(&host)?;
+                        let request = format!(
+                            "GET /SIGKILL HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                            host
+                        );
+                        stream.write_all(request.as_bytes())?;
+                        let mut response = String::new();
+                        stream.read_to_string(&mut response)?;
+                        Ok(())
+                    };
+                    let _ = signal_shutdown();
+                    if let Err(e) = self
+                        .rx_serv_stopped
+                        .recv_timeout(std::time::Duration::from_secs(3))
+                    {
+                        self.server_handle = Some(handle);
+                        return Err(anyhow!("Could not kill server: {}", e));
+                    }
+                }
+                handle
+                    .join()
+                    .expect("Could not kill server, error waiting for shutdown")?;
+                Ok(())
+            }
+            None => Err(anyhow!("Expected server handle")),
+        }
     }
 
     fn config_project_title(&mut self, ui: &mut Ui) {
@@ -113,6 +139,7 @@ impl AppGui {
                 if let Ok(name) = device.name() {
                     ui.label(format!("Audio Device: {}", name));
                 }
+
                 egui::ComboBox::from_label("Input Channel")
                     .selected_text(format!("{}", self.opt.input_channel))
                     .show_ui(ui, |ui| {
@@ -136,14 +163,15 @@ impl AppGui {
 
     fn config_buffer_size(&mut self, ui: &mut Ui) {
         match LTCListener::get_buffer_opts() {
-            Ok(b) => match b {
+            Ok(buf) => match buf {
                 Some(opts) => {
                     if self.opt.buffer_size.is_none()
                         || !opts.contains(&self.opt.buffer_size.unwrap())
                     {
-                        let mid = opts.iter().nth(opts.len() / 2);
+                        let mid = opts.get(opts.len() / 2);
                         self.opt.buffer_size = mid.copied();
                     };
+
                     egui::ComboBox::from_label("Buffer Size")
                         .selected_text(format!("{}", self.opt.buffer_size.unwrap_or(0)))
                         .show_ui(ui, |ui| {
@@ -213,7 +241,7 @@ impl eframe::App for AppGui {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("EzEDL v0.1");
 
-            ui.add_enabled_ui(!self.is_listening, |ui| {
+            ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
                 ui.add_space(10.0);
                 self.config_project_title(ui);
                 ui.add_space(10.0);
@@ -237,13 +265,13 @@ impl eframe::App for AppGui {
                 ui.add_space(10.0);
             });
 
-            ui.add_enabled_ui(!self.is_listening, |ui| {
+            ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
                 if ui.button("Launch Server").clicked() {
                     self.spawn_server()
                 }
             });
 
-            ui.add_enabled_ui(self.is_listening, |ui| {
+            ui.add_enabled_ui(self.server_handle.is_some(), |ui| {
                 if ui.button("Stop Server").clicked() {
                     self.kill_server()
                         .unwrap_or_else(|e| log::error!("Unable to kill server: {e}"))

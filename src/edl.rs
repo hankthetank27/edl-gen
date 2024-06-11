@@ -22,10 +22,6 @@ pub struct Edl {
 
 impl Edl {
     pub fn new(opt: &Opt) -> Result<Self, Error> {
-        // if !Path::new(&opt.dir).exists() {
-        //     std::fs::create_dir_all(&opt.dir)?;
-        // }
-
         let make_path = |n: Option<u32>| {
             let mut path = opt.dir.clone();
             match n {

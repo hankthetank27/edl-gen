@@ -74,7 +74,7 @@ impl LTCListener {
             }
             n *= 2;
         }
-        return Ok(Some(opts));
+        Ok(Some(opts))
     }
 
     pub fn listen(self) -> DecodeHandlers {

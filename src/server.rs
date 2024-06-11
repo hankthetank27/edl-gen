@@ -27,6 +27,7 @@ impl Server {
     pub fn listen(
         &mut self,
         rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
+        tx_serv_stopped: mpsc::Sender<()>,
         decode_handlers: DecodeHandlers,
     ) -> Result<(), Error> {
         let listener =
@@ -51,13 +52,9 @@ impl Server {
                 Err(mpsc::TryRecvError::Empty) => continue,
                 Err(e) => log::error!("Unable to read halt server message: {}", e),
             }
-
-            // match res {
-            //     StatusCode::S418 => break,
-            //     _ => continue,
-            // }
         }
 
+        tx_serv_stopped.send(())?;
         log::info!("Goodbye!");
         Ok(())
     }
@@ -232,7 +229,7 @@ impl EditRequestData {
         log::info!("wating for audio...");
         let tc = match ctx.decode_handlers.recv_frame() {
             Ok(f) => f,
-            Err(DecodeErr::NoVal(_)) => return Ok(format!("Exiting...").into()),
+            Err(DecodeErr::NoVal(_)) => return Ok("Exiting...".to_string().into()),
             Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
         };
         ctx.frame_queue.push(tc, self)?;
