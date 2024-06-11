@@ -15,5 +15,6 @@ Coming soon...
 ### TODO: ###
 - Improve logging (colors formating etc)
 - Save settings
+- Limit log size
 - Handle speed changes
 - BitFocus Companion module

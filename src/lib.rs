@@ -65,6 +65,7 @@ pub struct Opt {
     pub dir: PathBuf,
     pub port: usize,
     pub input_channel: usize,
+    pub buffer_size: Option<u32>,
     pub sample_rate: usize,
     pub fps: f32,
     pub ntsc: edl::Fcm,
@@ -72,9 +73,16 @@ pub struct Opt {
 
 impl Opt {
     fn make_default_dir() -> PathBuf {
-        let mut dir = dirs::home_dir().unwrap();
-        dir.push("Desktop");
-        dir
+        match dirs::home_dir() {
+            Some(mut home) => {
+                home.push("Desktop");
+                if !home.is_dir() {
+                    home.pop();
+                };
+                home
+            }
+            None => PathBuf::from("/"),
+        }
     }
 }
 
@@ -84,6 +92,7 @@ impl Default for Opt {
             title: "my-video".into(),
             dir: Opt::make_default_dir(),
             port: 6969,
+            buffer_size: Some(1024),
             input_channel: 1,
             sample_rate: 44100,
             fps: 23.976,

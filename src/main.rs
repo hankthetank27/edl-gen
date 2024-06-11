@@ -12,6 +12,7 @@ use std::io::prelude::*;
 use std::net::TcpStream;
 use std::sync::{mpsc, Arc};
 use std::thread;
+use std::usize;
 
 fn main() -> Result<(), Error> {
     Logger::init()?;
@@ -108,21 +109,16 @@ impl AppGui {
 
     fn config_input_channel(&mut self, ui: &mut Ui) {
         match LTCListener::get_default_config() {
-            Ok((opt, device)) => {
+            Ok((config, device)) => {
                 if let Ok(name) = device.name() {
                     ui.label(format!("Audio Device: {}", name));
                 }
                 egui::ComboBox::from_label("Input Channel")
                     .selected_text(format!("{}", self.opt.input_channel))
                     .show_ui(ui, |ui| {
-                        for channel in (1..opt.channels() + 1).collect::<Vec<u16>>().iter() {
-                            if ui
-                                .selectable_label(
-                                    *channel as usize == self.opt.input_channel,
-                                    channel.to_string(),
-                                )
-                                .clicked()
-                            {
+                        for channel in (1..config.channels() + 1).collect::<Vec<u16>>().iter() {
+                            let checked = *channel as usize == self.opt.input_channel;
+                            if ui.selectable_label(checked, channel.to_string()).clicked() {
                                 self.opt.input_channel = *channel as usize;
                             }
                         }
@@ -138,8 +134,39 @@ impl AppGui {
         };
     }
 
+    fn config_buffer_size(&mut self, ui: &mut Ui) {
+        match LTCListener::get_buffer_opts() {
+            Ok(b) => match b {
+                Some(opts) => {
+                    if self.opt.buffer_size.is_none()
+                        || !opts.contains(&self.opt.buffer_size.unwrap())
+                    {
+                        let mid = opts.iter().nth(opts.len() / 2);
+                        self.opt.buffer_size = mid.copied();
+                    };
+                    egui::ComboBox::from_label("Buffer Size")
+                        .selected_text(format!("{}", self.opt.buffer_size.unwrap_or(0)))
+                        .show_ui(ui, |ui| {
+                            for buffer in opts.iter() {
+                                let checked = Some(*buffer) == self.opt.buffer_size;
+                                if ui.selectable_label(checked, buffer.to_string()).clicked() {
+                                    self.opt.buffer_size = Some(*buffer);
+                                }
+                            }
+                        });
+                }
+                None => {
+                    self.opt.buffer_size = None;
+                }
+            },
+            Err(e) => {
+                log::error!("Could not get audio device config: {e}");
+            }
+        };
+    }
+
     fn config_sample_rate(&mut self, ui: &mut Ui) {
-        egui::ComboBox::from_label("LTC Sample Rate")
+        egui::ComboBox::from_label("LTC Input Sample Rate")
             .selected_text(format!("{:?}hz", self.opt.sample_rate))
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut self.opt.sample_rate, 44100, "44100hz");
@@ -197,6 +224,8 @@ impl eframe::App for AppGui {
                 self.config_input_channel(ui);
                 ui.add_space(10.0);
                 self.config_sample_rate(ui);
+                ui.add_space(10.0);
+                self.config_buffer_size(ui);
                 ui.add_space(10.0);
                 self.config_frame_rate(ui);
                 ui.add_space(10.0);

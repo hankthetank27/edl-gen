@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SupportedStreamConfig};
+use cpal::{Device, SupportedBufferSize, SupportedStreamConfig};
 use ltc::{LTCDecoder, LTCFrame};
 use num::cast::AsPrimitive;
 use std::collections::VecDeque;
@@ -60,6 +60,23 @@ impl LTCListener {
         Ok((config, device))
     }
 
+    pub fn get_buffer_opts() -> Result<Option<Vec<u32>>, Error> {
+        let (config, _) = LTCListener::get_default_config()?;
+        let (min, max) = match config.buffer_size() {
+            SupportedBufferSize::Unknown => return Ok(None),
+            SupportedBufferSize::Range { min, max } => (min, max),
+        };
+        let mut opts = vec![];
+        let mut n = 1;
+        while n <= *max {
+            if n >= *min {
+                opts.push(n)
+            }
+            n *= 2;
+        }
+        return Ok(Some(opts));
+    }
+
     pub fn listen(self) -> DecodeHandlers {
         let (frame_sender, frame_recv) = single_val_channel::channel::<LTCFrame>();
         let (decode_state_sender, decode_state_recv) = mpsc::channel::<DecodeState>();
@@ -73,14 +90,23 @@ impl LTCListener {
             self.input_channel,
         );
 
+        let input_config = cpal::StreamConfig {
+            channels: self.config.channels(),
+            sample_rate: self.config.sample_rate(),
+            buffer_size: match self.opt.buffer_size {
+                Some(s) => cpal::BufferSize::Fixed(s),
+                None => cpal::BufferSize::Default,
+            },
+        };
+
         thread::spawn(move || -> Result<(), Error> {
             let err_fn = |err| log::error!("an error occurred on stream: {}", err);
             let stream = match self.config.sample_format() {
                 cpal::SampleFormat::I8 => self
                     .device
                     .build_input_stream(
-                        &self.config.into(),
-                        move |data: &[i8], _: &_| ctx.handle_decode(data),
+                        &input_config,
+                        move |data, _: &_| ctx.handle_decode::<i8>(data),
                         err_fn,
                         None,
                     )
@@ -88,8 +114,8 @@ impl LTCListener {
                 cpal::SampleFormat::I16 => self
                     .device
                     .build_input_stream(
-                        &self.config.into(),
-                        move |data: &[i16], _: &_| ctx.handle_decode(data),
+                        &input_config,
+                        move |data, _: &_| ctx.handle_decode::<i16>(data),
                         err_fn,
                         None,
                     )
@@ -97,8 +123,8 @@ impl LTCListener {
                 cpal::SampleFormat::I32 => self
                     .device
                     .build_input_stream(
-                        &self.config.into(),
-                        move |data: &[i32], _: &_| ctx.handle_decode(data),
+                        &input_config,
+                        move |data, _: &_| ctx.handle_decode::<i32>(data),
                         err_fn,
                         None,
                     )
@@ -106,8 +132,8 @@ impl LTCListener {
                 cpal::SampleFormat::F32 => self
                     .device
                     .build_input_stream(
-                        &self.config.into(),
-                        move |data: &[f32], _: &_| ctx.handle_decode(data),
+                        &input_config,
+                        move |data, _: &_| ctx.handle_decode::<f32>(data),
                         err_fn,
                         None,
                     )
@@ -119,8 +145,8 @@ impl LTCListener {
 
             stream.play()?;
             stop_listen_recv.recv()?;
-
             log::info!("Stopped listening for LTC");
+
             Ok(())
         });
 
