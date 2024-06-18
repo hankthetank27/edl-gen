@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SupportedBufferSize, SupportedStreamConfig};
+use cpal::SupportedBufferSize;
 use ltc::{LTCDecoder, LTCFrame};
-use num::cast::AsPrimitive;
+use num_traits::cast::AsPrimitive;
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::thread;
@@ -50,7 +50,7 @@ impl LTCListener {
         })
     }
 
-    pub fn get_default_config() -> Result<(SupportedStreamConfig, Device), Error> {
+    pub fn get_default_config() -> Result<(cpal::SupportedStreamConfig, cpal::Device), Error> {
         let device = cpal::default_host()
             .default_input_device()
             .context("failed to find input device")?;
@@ -256,52 +256,52 @@ impl DecodeContext {
 
 #[derive(Debug)]
 pub struct DecodeHandlers {
-    pub frame_sender: single_val_channel::Sender<LTCFrame>,
-    pub frame_recv: single_val_channel::Receiver<LTCFrame>,
-    pub decode_state_sender: mpsc::Sender<DecodeState>,
-    pub stop_listen_sender: mpsc::Sender<()>,
+    pub tx_ltc_frame: single_val_channel::Sender<LTCFrame>,
+    pub rx_ltc_frame: single_val_channel::Receiver<LTCFrame>,
+    pub tx_decode_state: mpsc::Sender<DecodeState>,
+    pub tx_stop_listen: mpsc::Sender<()>,
     opt: Opt,
 }
 
 impl DecodeHandlers {
     fn new(
-        frame_sender: single_val_channel::Sender<LTCFrame>,
-        frame_recv: single_val_channel::Receiver<LTCFrame>,
-        decode_state_sender: mpsc::Sender<DecodeState>,
-        stop_listen_sender: mpsc::Sender<()>,
+        tx_ltc_frame: single_val_channel::Sender<LTCFrame>,
+        rx_ltc_frame: single_val_channel::Receiver<LTCFrame>,
+        tx_decode_state: mpsc::Sender<DecodeState>,
+        tx_stop_listen: mpsc::Sender<()>,
         opt: Opt,
     ) -> Self {
         DecodeHandlers {
-            frame_sender,
-            frame_recv,
-            decode_state_sender,
-            stop_listen_sender,
+            tx_ltc_frame,
+            rx_ltc_frame,
+            tx_decode_state,
+            tx_stop_listen,
             opt,
         }
     }
 
     pub fn try_recv_frame(&self) -> Result<Timecode, DecodeErr> {
-        Ok(self.frame_recv.try_recv()?.into_timecode(&self.opt)?)
+        Ok(self.rx_ltc_frame.try_recv()?.into_timecode(&self.opt)?)
     }
 
     pub fn recv_frame(&self) -> Result<Timecode, DecodeErr> {
-        Ok(self.frame_recv.recv()?.into_timecode(&self.opt)?)
+        Ok(self.rx_ltc_frame.recv()?.into_timecode(&self.opt)?)
     }
 
     pub fn decode_on(&self) -> Result<(), Error> {
-        self.decode_state_sender
+        self.tx_decode_state
             .send(DecodeState::On)
             .context("Unable message decoding to start")
     }
 
     pub fn decode_off(&self) -> Result<(), Error> {
-        self.decode_state_sender
+        self.tx_decode_state
             .send(DecodeState::Off)
             .context("Unable message decoding to shut off")
     }
 
     pub fn stop_ltc_listener(&self) -> Result<(), Error> {
-        self.stop_listen_sender
+        self.tx_stop_listen
             .send(())
             .context("Unable to teardown LTC listener")
     }

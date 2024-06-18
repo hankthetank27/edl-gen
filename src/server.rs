@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
-use egui::mutex::Mutex;
+use eframe::egui::mutex::Mutex;
 use httparse::{Request as ReqParser, Status};
 use serde::{Deserialize, Serialize};
 use std::io::{prelude::*, BufReader};
@@ -226,14 +226,14 @@ impl EditRequestData {
     }
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
-        log::info!("wating for audio...");
+        log::info!("Wating for audio...");
         let tc = match ctx.decode_handlers.recv_frame() {
             Ok(f) => f,
-            Err(DecodeErr::NoVal(_)) => return Ok("Exiting...".to_string().into()),
+            Err(DecodeErr::NoVal(_)) => return Ok("Exited".to_string().into()),
             Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
         };
         ctx.frame_queue.push(tc, self)?;
-        log::info!("ready!");
+        log::info!("Ready!");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }

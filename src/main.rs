@@ -1,19 +1,17 @@
 use anyhow::{anyhow, Error};
 use cpal::traits::DeviceTrait;
+use eframe::egui::{self, mutex::Mutex, Ui};
+use ltc::LTCFrame;
+use std::io::prelude::*;
+use std::net::TcpStream;
+use std::sync::{mpsc, Arc};
+use std::thread::{self, JoinHandle};
+
 use edl_gen::ltc_decode::LTCListener;
 use edl_gen::server::Server;
 use edl_gen::single_val_channel;
 use edl_gen::Logger;
 use edl_gen::{edl, Opt};
-use egui::mutex::Mutex;
-use egui::Ui;
-use ltc::LTCFrame;
-use std::io::prelude::*;
-use std::net::TcpStream;
-use std::sync::{mpsc, Arc};
-use std::thread;
-use std::thread::JoinHandle;
-use std::usize;
 
 fn main() -> Result<(), Error> {
     Logger::init()?;
@@ -35,13 +33,13 @@ fn main() -> Result<(), Error> {
 }
 
 struct AppGui {
-    opt: Opt,
     rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
     tx_stop_serv: mpsc::Sender<()>,
     tx_serv_stopped: mpsc::Sender<()>,
     rx_serv_stopped: mpsc::Receiver<()>,
-    tx_decode_ltc: Option<single_val_channel::Sender<LTCFrame>>,
+    tx_ltc_frame: Option<single_val_channel::Sender<LTCFrame>>,
     server_handle: Option<JoinHandle<Result<(), Error>>>,
+    opt: Opt,
 }
 
 impl AppGui {
@@ -49,13 +47,13 @@ impl AppGui {
         let (tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
         let (tx_serv_stopped, rx_serv_stopped) = mpsc::channel::<()>();
         AppGui {
-            opt: Opt::default(),
             server_handle: None,
             rx_stop_serv: Arc::new(Mutex::new(rx_stop_serv)),
-            tx_decode_ltc: None,
+            tx_ltc_frame: None,
             tx_stop_serv,
             tx_serv_stopped,
             rx_serv_stopped,
+            opt: Opt::default(),
         }
     }
 
@@ -70,7 +68,8 @@ impl AppGui {
         let opt = self.opt.clone();
         let rx_stop_serv = Arc::clone(&self.rx_stop_serv);
         let tx_serv_stopped = self.tx_serv_stopped.clone();
-        self.tx_decode_ltc = Some(decode_handlers.frame_sender.clone());
+
+        self.tx_ltc_frame = Some(decode_handlers.tx_ltc_frame.clone());
         self.server_handle = Some(thread::spawn(move || {
             Server::new(opt).listen(rx_stop_serv, tx_serv_stopped, decode_handlers)
         }));
@@ -80,8 +79,8 @@ impl AppGui {
         match self.server_handle.take() {
             Some(handle) => {
                 self.tx_stop_serv.send(())?;
-                if let Some(decode_ltc) = self.tx_decode_ltc.as_ref() {
-                    decode_ltc.hangup();
+                if let Some(tx_ltc_frame) = self.tx_ltc_frame.as_ref() {
+                    tx_ltc_frame.hangup();
                 };
                 // If the thread hasnt received the "shutdown" message, we will attempt to connect
                 // to the server to advance to the next incoming stream in case its still waiting.
@@ -102,7 +101,9 @@ impl AppGui {
                         stream.read_to_string(&mut response)?;
                         Ok(())
                     };
+
                     let _ = signal_shutdown();
+
                     if let Err(e) = self
                         .rx_serv_stopped
                         .recv_timeout(std::time::Duration::from_secs(3))
@@ -111,9 +112,11 @@ impl AppGui {
                         return Err(anyhow!("Could not kill server: {}", e));
                     }
                 }
+
                 handle
                     .join()
                     .expect("Could not kill server, error waiting for shutdown")?;
+
                 Ok(())
             }
             None => Err(anyhow!("Expected server handle")),
@@ -232,37 +235,62 @@ impl AppGui {
     }
 
     fn config_tcp_port(&mut self, ui: &mut Ui) {
-        ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9000).text("TCP Port"));
+        ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9999).text("TCP Port"));
+    }
+
+    fn logger(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height(ui.available_height() - 20.0)
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                Logger::try_get_log(|logs| {
+                    logs.iter().for_each(|(level, string)| {
+                        let string_format = format!("[{}]: {}", level, string);
+                        match level {
+                            log::Level::Warn => {
+                                ui.colored_label(egui::Color32::YELLOW, string_format)
+                            }
+                            log::Level::Error => {
+                                ui.colored_label(egui::Color32::RED, string_format)
+                            }
+                            _ => ui.label(string_format),
+                        };
+                    });
+                    ctx.request_repaint();
+                });
+            });
     }
 }
 
 impl eframe::App for AppGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("EzEDL v0.1");
+            let space = 10.0;
+            ui.heading("EDL-Gen v0.1");
 
             ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
-                ui.add_space(10.0);
+                ui.add_space(space);
                 self.config_project_title(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
                 self.config_storage_dir(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
                 ui.separator();
-                ui.add_space(10.0);
+                ui.add_space(space);
                 self.config_input_channel(ui);
-                ui.add_space(10.0);
-                self.config_sample_rate(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
                 self.config_buffer_size(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
+                self.config_sample_rate(ui);
+                ui.add_space(space);
                 self.config_frame_rate(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
                 self.config_ntfs(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
                 self.config_tcp_port(ui);
-                ui.add_space(10.0);
+                ui.add_space(space);
                 ui.separator();
-                ui.add_space(10.0);
+                ui.add_space(space);
             });
 
             ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
@@ -278,33 +306,8 @@ impl eframe::App for AppGui {
                 }
             });
 
-            ui.add_space(10.0);
-            let mut logs_displayed: usize = 0;
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .max_height(ui.available_height() - 20.0)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    Logger::try_get_log(|logs| {
-                        logs.iter().for_each(|(level, string)| {
-                            let string_format = format!("[{}]: {}", level, string);
-
-                            match level {
-                                log::Level::Warn => {
-                                    ui.colored_label(egui::Color32::YELLOW, string_format)
-                                }
-                                log::Level::Error => {
-                                    ui.colored_label(egui::Color32::RED, string_format)
-                                }
-                                _ => ui.label(string_format),
-                            };
-
-                            logs_displayed += 1;
-                        });
-                        ctx.request_repaint();
-                    });
-                });
+            ui.add_space(space);
+            self.logger(ui, ctx)
         });
     }
 }

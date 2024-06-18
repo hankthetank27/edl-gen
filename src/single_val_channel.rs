@@ -75,7 +75,7 @@ impl<T> Sender<T> {
 
     pub fn hangup(&self) {
         self.0.closed.swap(true, Ordering::Relaxed);
-        self.0.cvar.notify_all()
+        self.0.cvar.notify_all();
     }
 }
 
