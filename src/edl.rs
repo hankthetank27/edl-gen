@@ -22,6 +22,10 @@ pub struct Edl {
 
 impl Edl {
     pub fn new(opt: &Opt) -> Result<Self, Error> {
+        // if !Path::new(&opt.dir).exists() {
+        //     std::fs::create_dir_all(&opt.dir)?;
+        // }
+
         let make_path = |n: Option<u32>| {
             let mut path = opt.dir.clone();
             match n {
@@ -199,9 +203,15 @@ impl TryFrom<Edit> for String {
     fn try_from(value: Edit) -> Result<Self, Self::Error> {
         let (cut_one_str, cut_two_str) = value.get_strs()?;
         match value {
-            Edit::Cut(clip) => Ok(EdlEditLine::from_clip(clip, cut_one_str, None)?.into()),
+            Edit::Cut(clip) => {
+                let from_cmt = format!("* FROM CLIP NAME: {}\n", clip.source_tape);
+                let from: String = EdlEditLine::from_clip(clip, cut_one_str, None)?.into();
+                Ok(format!("{from}{from_cmt}\n"))
+            }
 
             Edit::Dissolve(dissolve) => {
+                let from_cmt = format!("* FROM CLIP NAME: {}\n", dissolve.from.source_tape);
+                let to_cmt = format!("* TO CLIP NAME: {}\n", dissolve.to.source_tape);
                 let from: String = EdlEditLine::from_clip(dissolve.from, cut_one_str, None)?.into();
                 let to: String = EdlEditLine::from_clip(
                     dissolve.to,
@@ -209,15 +219,17 @@ impl TryFrom<Edit> for String {
                     Some(dissolve.edit_duration_frames),
                 )?
                 .into();
-                Ok(format!("{from}{to}"))
+                Ok(format!("{from}{to}{from_cmt}{to_cmt}\n"))
             }
 
             Edit::Wipe(wipe) => {
+                let from_cmt = format!("* FROM CLIP NAME: {}\n", wipe.from.source_tape);
+                let to_cmt = format!("* TO CLIP NAME: {}\n", wipe.to.source_tape);
                 let from: String = EdlEditLine::from_clip(wipe.from, cut_one_str, None)?.into();
                 let to: String =
                     EdlEditLine::from_clip(wipe.to, cut_two_str, Some(wipe.edit_duration_frames))?
                         .into();
-                Ok(format!("{from}{to}"))
+                Ok(format!("{from}{to}{from_cmt}{to_cmt}\n"))
             }
         }
     }
@@ -308,7 +320,7 @@ impl EdlEditLine {
 impl From<EdlEditLine> for String {
     fn from(value: EdlEditLine) -> Self {
         format!(
-            "{}      {}      {}     {} {} {} {} {} {}\n",
+            "{}   {}   {}   {} {} {} {} {} {}\n",
             value.edit_number,
             value.source_tape,
             value.av_channels,
@@ -317,7 +329,7 @@ impl From<EdlEditLine> for String {
             value.record_in,
             value.record_out,
             value.source_in,
-            value.source_out
+            value.source_out,
         )
     }
 }
