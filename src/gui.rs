@@ -2,7 +2,7 @@ use anyhow::{anyhow, Error};
 use cpal::traits::DeviceTrait;
 use eframe::egui::{self, mutex::Mutex, Ui};
 use ltc::LTCFrame;
-use std::io::prelude::*;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
@@ -248,7 +248,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let space = 10.0;
-            ui.heading("EDL-Gen v0.1");
+            ui.heading("EDL-Server v0.1");
 
             ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
                 ui.add_space(space);

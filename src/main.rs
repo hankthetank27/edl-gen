@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Error};
-use eframe::egui::{self};
+use eframe::egui;
 
 use edl_gen::{gui::App, Logger};
 
@@ -11,13 +11,6 @@ fn main() -> Result<(), Error> {
         ..Default::default()
     };
 
-    eframe::run_native(
-        "EDL-Gen",
-        options,
-        Box::new(|_cc| {
-            let app = App::new();
-            Box::new(app)
-        }),
-    )
-    .map_err(|e| anyhow!("Could not initate UI: {}", e))
+    eframe::run_native("EDL-Server", options, Box::new(|_cc| Box::new(App::new())))
+        .map_err(|e| anyhow!("Could not initate UI: {}", e))
 }
