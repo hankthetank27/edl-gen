@@ -23,8 +23,8 @@ pub struct App {
     opt: Opt,
 }
 
-impl App {
-    pub fn new() -> Self {
+impl Default for App {
+    fn default() -> Self {
         let (tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
         let (tx_serv_stopped, rx_serv_stopped) = mpsc::channel::<()>();
         App {
@@ -37,7 +37,9 @@ impl App {
             opt: Opt::default(),
         }
     }
+}
 
+impl App {
     fn spawn_server(&mut self) {
         let decode_handlers = match LTCListener::new(self.opt.clone()) {
             Ok(listener) => listener.listen(),
@@ -220,14 +222,15 @@ impl App {
     }
 
     fn logger(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        egui::ScrollArea::vertical()
+        let scroll = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .max_height(ui.available_height() - 20.0)
+            .max_height(ui.available_height() - 2.0)
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 Logger::try_get_log(|logs| {
                     logs.iter().for_each(|(level, string)| {
-                        let string_format = format!("[{}]: {}", level, string);
+                        // let string_format = format!("[{}]: {}", level, string);
+                        let string_format = format!("{}", string);
                         match level {
                             log::Level::Warn => {
                                 ui.colored_label(egui::Color32::YELLOW, string_format)
@@ -235,12 +238,20 @@ impl App {
                             log::Level::Error => {
                                 ui.colored_label(egui::Color32::RED, string_format)
                             }
+                            // log::Level::Info => {
+                            //     ui.colored_label(egui::Color32::LIGHT_YELLOW, string_format)
+                            // }
                             _ => ui.label(string_format),
                         };
                     });
                     ctx.request_repaint();
                 });
             });
+        let frame = egui::Frame::none()
+            .fill(egui::Color32::from_rgba_premultiplied(18, 18, 18, 50))
+            .rounding(egui::Rounding::from(3.0))
+            .paint(scroll.inner_rect.expand2(egui::vec2(2.0, 3.0)));
+        ui.painter().add(frame);
     }
 }
 

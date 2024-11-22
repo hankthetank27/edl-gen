@@ -33,8 +33,6 @@ impl Server {
             TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
         let mut ctx = Context {
             decode_handlers,
-
-            //TODO: we should make this an Option and create a new EDL on calls to '/start'
             edl: None,
             frame_queue: FrameQueue::new(),
             rec_state: EdlRecordingState::Stopped,
