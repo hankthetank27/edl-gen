@@ -35,9 +35,10 @@ impl Server {
             decode_handlers,
 
             //TODO: we should make this an Option and create a new EDL on calls to '/start'
-            edl: Edl::new(&opt)?,
+            edl: None,
             frame_queue: FrameQueue::new(),
             rec_state: EdlRecordingState::Stopped,
+            opt,
         };
 
         log::info!("Server listening on {}", &self.host);
@@ -97,8 +98,9 @@ enum StatusCode {
 pub struct Context {
     frame_queue: FrameQueue,
     decode_handlers: DecodeHandlers,
-    edl: Edl,
+    edl: Option<Edl>,
     rec_state: EdlRecordingState,
+    opt: Opt,
 }
 
 #[derive(Debug)]
@@ -172,10 +174,11 @@ impl<'req> Request<'req> {
     fn handle_start(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match &ctx.rec_state {
             EdlRecordingState::Stopped => {
+                ctx.rec_state = EdlRecordingState::Started;
                 ctx.decode_handlers.decode_on()?;
                 ctx.frame_queue.clear();
+                ctx.edl = Some(Edl::new(&ctx.opt)?);
                 let mut response = self.body()?.wait_for_first_frame(ctx)?;
-                ctx.rec_state = EdlRecordingState::Started;
                 response.content = format!("Started decoding. {}", response.content);
                 Ok(response)
             }
@@ -185,14 +188,18 @@ impl<'req> Request<'req> {
                 Ok(Response::new(msg.into(), StatusCode::S404))
             }
         }
+        .or_else(|e| {
+            ctx.rec_state = EdlRecordingState::Stopped;
+            e
+        })
     }
 
     fn handle_end(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match &ctx.rec_state {
             EdlRecordingState::Started => {
+                ctx.rec_state = EdlRecordingState::Stopped;
                 let mut response = self.body()?.try_log_edit(ctx)?;
                 ctx.decode_handlers.decode_off()?;
-                ctx.rec_state = EdlRecordingState::Stopped;
                 log::info!("Ended recording!\n");
                 response.content = format!("Stopped decoding with {}", response.content);
                 Ok(response)
@@ -202,6 +209,10 @@ impl<'req> Request<'req> {
                 log::warn!("{msg}");
                 Ok(Response::new(msg.into(), StatusCode::S404))
             }
+            .or_else(|e| {
+                ctx.rec_state = EdlRecordingState::Started;
+                e
+            }),
         }
     }
 
@@ -252,7 +263,12 @@ pub struct EditRequestData {
 impl EditRequestData {
     fn try_log_edit(&self, ctx: &mut Context) -> Result<Response, Error> {
         match self.parse_edit_from_log(ctx) {
-            Ok(edit) => Ok(ctx.edl.write_from_edit(edit)?.into()),
+            Ok(edit) => Ok(ctx
+                .edl
+                .as_mut()
+                .context("EDL file does not exist")?
+                .write_from_edit(edit)?
+                .into()),
             Err(DecodeErr::NoVal(_)) => Ok(frame_unavailable()),
             Err(e) => Err(Error::msg(e)),
         }
