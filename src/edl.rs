@@ -48,7 +48,7 @@ impl Edl {
 
         let mut file = BufWriter::new(File::create_new(path)?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        file.write_all(format!("FCM: {}\n", String::from(opt.ntsc)).as_bytes())?;
+        file.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
 
         Ok(Edl { file })
@@ -58,7 +58,7 @@ impl Edl {
         let edit_str: String = edit.try_into()?;
         self.file.write_all(edit_str.as_bytes())?;
         self.file.flush()?;
-        log::info!("Edit Logged: \n{}", edit_str);
+        log::info!("{edit_str}");
         Ok(edit_str)
     }
 }

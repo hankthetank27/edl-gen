@@ -226,7 +226,7 @@ impl DecodeContext {
                     // the timecode playback hasn't started). Ideally, we wouldn't need to
                     // reallocate a new decoder to reset the buffer state, but there is not API to
                     // drain it.
-                    if self.iters_since_last_decode > 100 {
+                    if self.iters_since_last_decode > 30 {
                         self.decoder = LTCDecoder::new(self.samples_per_frame, VecDeque::new());
                         self.iters_since_last_decode = 0;
                     } else {

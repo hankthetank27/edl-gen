@@ -52,7 +52,7 @@ impl App {
 
         self.tx_ltc_frame = Some(decode_handlers.tx_ltc_frame.clone());
         self.server_handle = Some(thread::spawn(move || {
-            Server::new(opt).listen(rx_stop_serv, tx_serv_stopped, decode_handlers)
+            Server::new(&opt.port).listen(rx_stop_serv, tx_serv_stopped, decode_handlers, opt)
         }));
     }
 

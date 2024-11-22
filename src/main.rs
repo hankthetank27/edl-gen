@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error};
 use eframe::egui;
 
-use edl_gen::{gui::App, Logger};
+use edl_server::{gui::App, Logger};
 
 fn main() -> Result<(), Error> {
     Logger::init()?;

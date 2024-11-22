@@ -13,14 +13,12 @@ use crate::Opt;
 
 pub struct Server {
     host: String,
-    opt: Opt,
 }
 
 impl Server {
-    pub fn new(opt: Opt) -> Self {
+    pub fn new(port: &usize) -> Self {
         Server {
-            host: format!("127.0.0.1:{}", opt.port),
-            opt,
+            host: format!("127.0.0.1:{}", port),
         }
     }
 
@@ -29,16 +27,20 @@ impl Server {
         rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
         tx_serv_stopped: mpsc::Sender<()>,
         decode_handlers: DecodeHandlers,
+        opt: Opt,
     ) -> Result<(), Error> {
         let listener =
             TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
         let mut ctx = Context {
             decode_handlers,
-            edl: Edl::new(&self.opt)?,
+
+            //TODO: we should make this an Option and create a new EDL on calls to '/start'
+            edl: Edl::new(&opt)?,
             frame_queue: FrameQueue::new(),
+            rec_state: EdlRecordingState::Stopped,
         };
 
-        log::info!("Listening on {}", &self.host);
+        log::info!("Server listening on {}", &self.host);
 
         for stream in listener.incoming() {
             self.handle_connection(stream?, &mut ctx)
@@ -96,6 +98,13 @@ pub struct Context {
     frame_queue: FrameQueue,
     decode_handlers: DecodeHandlers,
     edl: Edl,
+    rec_state: EdlRecordingState,
+}
+
+#[derive(Debug)]
+enum EdlRecordingState {
+    Started,
+    Stopped,
 }
 
 #[derive(Debug)]
@@ -147,20 +156,9 @@ impl<'req> Request<'req> {
     fn route(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match self.method {
             Some("POST") => match self.path {
-                Some("/start") => {
-                    ctx.decode_handlers.decode_on()?;
-                    ctx.frame_queue.clear();
-                    let mut response = self.body()?.wait_for_first_frame(ctx)?;
-                    response.content = format!("Started decoding. {}", response.content);
-                    Ok(response)
-                }
-                Some("/stop") => {
-                    ctx.decode_handlers.decode_off()?;
-                    let mut response = self.body()?.try_log_edit(ctx)?;
-                    response.content = format!("Stopped decoding with {}", response.content);
-                    Ok(response)
-                }
-                Some("/log") => self.body()?.try_log_edit(ctx),
+                Some("/start") => self.handle_start(ctx),
+                Some("/end") => self.handle_end(ctx),
+                Some("/log") => self.handle_log(ctx),
                 _ => Ok(not_found()),
             },
             Some("GET") => match self.path {
@@ -168,6 +166,53 @@ impl<'req> Request<'req> {
                 _ => Ok(not_found()),
             },
             _ => Ok(not_found()),
+        }
+    }
+
+    fn handle_start(&mut self, ctx: &mut Context) -> Result<Response, Error> {
+        match &ctx.rec_state {
+            EdlRecordingState::Stopped => {
+                ctx.decode_handlers.decode_on()?;
+                ctx.frame_queue.clear();
+                let mut response = self.body()?.wait_for_first_frame(ctx)?;
+                ctx.rec_state = EdlRecordingState::Started;
+                response.content = format!("Started decoding. {}", response.content);
+                Ok(response)
+            }
+            EdlRecordingState::Started => {
+                let msg = "Recording has already started. You cannot start in this state.";
+                log::warn!("{msg}");
+                Ok(Response::new(msg.into(), StatusCode::S404))
+            }
+        }
+    }
+
+    fn handle_end(&mut self, ctx: &mut Context) -> Result<Response, Error> {
+        match &ctx.rec_state {
+            EdlRecordingState::Started => {
+                let mut response = self.body()?.try_log_edit(ctx)?;
+                ctx.decode_handlers.decode_off()?;
+                ctx.rec_state = EdlRecordingState::Stopped;
+                log::info!("Ended recording!\n");
+                response.content = format!("Stopped decoding with {}", response.content);
+                Ok(response)
+            }
+            EdlRecordingState::Stopped => {
+                let msg = "Recording not yet started!";
+                log::warn!("{msg}");
+                Ok(Response::new(msg.into(), StatusCode::S404))
+            }
+        }
+    }
+
+    fn handle_log(&mut self, ctx: &mut Context) -> Result<Response, Error> {
+        match &ctx.rec_state {
+            EdlRecordingState::Started => self.body()?.try_log_edit(ctx),
+            EdlRecordingState::Stopped => {
+                let msg = "Recording not yet started!";
+                log::warn!("{msg}");
+                Ok(Response::new(msg.into(), StatusCode::S404))
+            }
         }
     }
 
@@ -226,14 +271,14 @@ impl EditRequestData {
     }
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
-        log::info!("Wating for audio...");
+        log::info!("Waiting for timecode signal to start...");
         let tc = match ctx.decode_handlers.recv_frame() {
             Ok(f) => f,
             Err(DecodeErr::NoVal(_)) => return Ok("Exited".to_string().into()),
             Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
         };
         ctx.frame_queue.push(tc, self)?;
-        log::info!("Ready!");
+        log::info!("Timecode signal detected and recording started!\n");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }
