@@ -32,10 +32,10 @@ impl Server {
         let listener =
             TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
         let mut ctx = Context {
-            decode_handlers,
-            edl: None,
             frame_queue: FrameQueue::new(),
             rec_state: EdlRecordingState::Stopped,
+            edl: None,
+            decode_handlers,
             opt,
         };
 

@@ -67,8 +67,8 @@ impl LTCListener {
             SupportedBufferSize::Range { min, max } => (min, max),
         };
         let mut opts = vec![];
-        let mut n = 1;
-        while n <= *max {
+        let mut n = 16;
+        while n <= *max && n <= 8192 {
             if n >= *min {
                 opts.push(n)
             }
