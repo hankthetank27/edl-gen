@@ -172,13 +172,15 @@ impl App {
             .selected_text(format!("{}", label))
             .show_ui(ui, |ui| match &self.opt.ltc_device {
                 Some(ltc_device) => {
-                    let config = &ltc_device.config;
-                    for channel in (1..config.channels() + 1).collect::<Vec<u16>>().iter() {
-                        let checked = Some(*channel as usize) == self.opt.input_channel;
-                        if ui.selectable_label(checked, channel.to_string()).clicked() {
-                            self.opt.input_channel = Some(*channel as usize);
-                        }
-                    }
+                    (1..&ltc_device.config.channels() + 1)
+                        .into_iter()
+                        .for_each(|channel| {
+                            let channel = channel as usize;
+                            let checked = Some(channel) == self.opt.input_channel;
+                            if ui.selectable_label(checked, channel.to_string()).clicked() {
+                                self.opt.input_channel = Some(channel);
+                            }
+                        });
                 }
                 None => {
                     ui.label("No Audio Device Found");
@@ -196,14 +198,12 @@ impl App {
             .selected_text(format!("{}", label))
             .show_ui(ui, |ui| match &self.opt.ltc_device {
                 Some(device) => match device.get_buffer_opts() {
-                    Some(opts) => {
-                        for buffer in opts.iter() {
-                            let checked = Some(*buffer) == self.opt.buffer_size;
-                            if ui.selectable_label(checked, buffer.to_string()).clicked() {
-                                self.opt.buffer_size = Some(*buffer);
-                            }
+                    Some(opts) => opts.into_iter().for_each(|buffer| {
+                        let checked = Some(buffer) == self.opt.buffer_size;
+                        if ui.selectable_label(checked, buffer.to_string()).clicked() {
+                            self.opt.buffer_size = Some(buffer);
                         }
-                    }
+                    }),
                     None => {
                         self.opt.buffer_size = None;
                     }
