@@ -1,5 +1,5 @@
 use log::{LevelFilter, SetLoggerError};
-use ltc_decode::LTCDevice;
+use ltc_decode::{DefaultConfigs, LTCDevice};
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -92,13 +92,11 @@ impl Opt {
 
 impl Default for Opt {
     fn default() -> Self {
-        let ltc_device = LTCDevice::get_default().ok();
-        let input_channel = ltc_device
-            .as_ref()
-            .and_then(|device| device.get_default_channel());
-        let buffer_size = ltc_device
-            .as_ref()
-            .and_then(|device| device.get_default_buffer_size());
+        let DefaultConfigs {
+            ltc_device,
+            input_channel,
+            buffer_size,
+        } = LTCDevice::get_default_configs();
         Self {
             title: "my-video".into(),
             dir: Opt::make_default_dir(),

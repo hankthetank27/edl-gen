@@ -60,6 +60,21 @@ impl LTCDevice {
     pub fn get_default_channel(&self) -> Option<usize> {
         (self.config.channels() >= 1).then_some(1)
     }
+
+    pub fn get_default_configs() -> DefaultConfigs {
+        let ltc_device = LTCDevice::get_default().ok();
+        let input_channel = ltc_device
+            .as_ref()
+            .and_then(|device| device.get_default_channel());
+        let buffer_size = ltc_device
+            .as_ref()
+            .and_then(|device| device.get_default_buffer_size());
+        DefaultConfigs {
+            ltc_device,
+            input_channel,
+            buffer_size,
+        }
+    }
 }
 
 impl TryFrom<Device> for LTCDevice {
@@ -70,6 +85,12 @@ impl TryFrom<Device> for LTCDevice {
             .context("Failed to get default input config")?;
         Ok(LTCDevice { device, config })
     }
+}
+
+pub struct DefaultConfigs {
+    pub ltc_device: Option<LTCDevice>,
+    pub buffer_size: Option<u32>,
+    pub input_channel: Option<usize>,
 }
 
 pub struct LTCListener {

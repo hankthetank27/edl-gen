@@ -7,7 +7,7 @@ use std::net::TcpStream;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 
-use crate::ltc_decode::{LTCDevice, LTCListener};
+use crate::ltc_decode::{DefaultConfigs, LTCDevice, LTCListener};
 use crate::server::Server;
 use crate::single_val_channel;
 use crate::Logger;
@@ -144,6 +144,22 @@ impl App {
                     ui.label("No Audio Device Found");
                 }
             });
+    }
+
+    fn refresh_input_device(&mut self, ui: &mut Ui) {
+        if ui.add(egui::Button::new("Refresh Devices")).clicked() {
+            self.opt.ltc_devices = LTCDevice::get_devices().ok();
+            if self.opt.ltc_device.is_none() {
+                let DefaultConfigs {
+                    ltc_device,
+                    input_channel,
+                    buffer_size,
+                } = LTCDevice::get_default_configs();
+                self.opt.ltc_device = ltc_device;
+                self.opt.input_channel = input_channel;
+                self.opt.buffer_size = buffer_size;
+            }
+        }
     }
 
     fn config_input_channel(&mut self, ui: &mut Ui) {
@@ -288,6 +304,7 @@ impl eframe::App for App {
                 ui.separator();
                 ui.add_space(space);
                 self.config_input_device(ui);
+                self.refresh_input_device(ui);
                 ui.add_space(space);
                 self.config_input_channel(ui);
                 ui.add_space(space);
