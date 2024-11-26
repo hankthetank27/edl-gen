@@ -124,8 +124,8 @@ impl App {
             Some(ltc_device) => ltc_device
                 .device
                 .name()
-                .unwrap_or_else(|_| "Device has no name".to_string()),
-            None => "No device found!".to_string(),
+                .unwrap_or_else(|_| "Device Has No Name".to_string()),
+            None => "No Device Found".to_string(),
         };
         let current_device_name = get_name(self.opt.ltc_device.as_ref().into());
         egui::ComboBox::from_label("Audio Device")
@@ -137,6 +137,7 @@ impl App {
                     if ui.selectable_label(checked, device_name).clicked() {
                         self.opt.ltc_device = Some(ltc_device.to_owned());
                         self.opt.input_channel = ltc_device.get_default_channel();
+                        self.opt.buffer_size = ltc_device.get_default_buffer_size();
                     }
                 }),
                 None => {
@@ -169,36 +170,32 @@ impl App {
             });
     }
 
-    //TODO: this is kinda sloppy style
     fn config_buffer_size(&mut self, ui: &mut Ui) {
-        match &self.opt.ltc_device {
-            Some(device) => match device.get_buffer_opts() {
-                Some(opts) => {
-                    if self.opt.buffer_size.is_none()
-                        || !opts.contains(&self.opt.buffer_size.unwrap())
-                    {
-                        let mid = opts.get(opts.len() / 2);
-                        self.opt.buffer_size = mid.copied();
-                    };
-                    egui::ComboBox::from_label("Buffer Size")
-                        .selected_text(format!("{}", self.opt.buffer_size.unwrap_or(0)))
-                        .show_ui(ui, |ui| {
-                            for buffer in opts.iter() {
-                                let checked = Some(*buffer) == self.opt.buffer_size;
-                                if ui.selectable_label(checked, buffer.to_string()).clicked() {
-                                    self.opt.buffer_size = Some(*buffer);
-                                }
+        let label = self
+            .opt
+            .buffer_size
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| "None Available".to_string());
+        egui::ComboBox::from_label("Buffer Size")
+            .selected_text(format!("{}", label))
+            .show_ui(ui, |ui| match &self.opt.ltc_device {
+                Some(device) => match device.get_buffer_opts() {
+                    Some(opts) => {
+                        for buffer in opts.iter() {
+                            let checked = Some(*buffer) == self.opt.buffer_size;
+                            if ui.selectable_label(checked, buffer.to_string()).clicked() {
+                                self.opt.buffer_size = Some(*buffer);
                             }
-                        });
-                }
+                        }
+                    }
+                    None => {
+                        self.opt.buffer_size = None;
+                    }
+                },
                 None => {
-                    self.opt.buffer_size = None;
+                    ui.label("No Audio Device Found");
                 }
-            },
-            None => {
-                ui.label("No Audio Device Found");
-            }
-        };
+            });
     }
 
     fn config_sample_rate(&mut self, ui: &mut Ui) {
@@ -251,7 +248,6 @@ impl App {
             .show(ui, |ui| {
                 Logger::try_get_log(|logs| {
                     logs.iter().for_each(|(level, string)| {
-                        // let string_format = format!("[{}]: {}", level, string);
                         let string_format = format!("{}", string);
                         match level {
                             log::Level::Warn => {

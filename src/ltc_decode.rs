@@ -41,6 +41,15 @@ impl LTCDevice {
         Some(opts)
     }
 
+    pub fn get_default_buffer_size(&self) -> Option<u32> {
+        self.get_buffer_opts()?.into_iter().reduce(|mut acc, buf| {
+            if acc != 1024 {
+                acc = buf
+            }
+            acc
+        })
+    }
+
     pub fn get_devices() -> Result<Vec<LTCDevice>, Error> {
         cpal::default_host()
             .input_devices()?
