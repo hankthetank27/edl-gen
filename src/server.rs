@@ -92,7 +92,6 @@ enum StatusCode {
     S500,
 }
 
-#[derive(Debug)]
 pub struct Context {
     frame_queue: FrameQueue,
     decode_handlers: DecodeHandlers,

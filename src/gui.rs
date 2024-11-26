@@ -7,7 +7,7 @@ use std::net::TcpStream;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 
-use crate::ltc_decode::LTCListener;
+use crate::ltc_decode::{LTCDevice, LTCListener};
 use crate::server::Server;
 use crate::single_val_channel;
 use crate::Logger;
@@ -116,40 +116,63 @@ impl App {
                 self.opt.dir = path;
             }
         }
-        ui.label(self.opt.dir.to_str().unwrap());
+        ui.label(self.opt.dir.to_str().unwrap_or("Dir"));
+    }
+
+    fn config_input_device(&mut self, ui: &mut Ui) {
+        let get_name = |device: Option<&LTCDevice>| match device {
+            Some(ltc_device) => ltc_device
+                .device
+                .name()
+                .unwrap_or_else(|_| "Device has no name".to_string()),
+            None => "No device found!".to_string(),
+        };
+        let current_device_name = get_name(self.opt.ltc_device.as_ref().into());
+        egui::ComboBox::from_label("Audio Device")
+            .selected_text(format!("{}", current_device_name))
+            .show_ui(ui, |ui| match &self.opt.ltc_devices {
+                Some(devices) => devices.into_iter().for_each(|ltc_device| {
+                    let device_name = get_name(Some(ltc_device));
+                    let checked = device_name == current_device_name;
+                    if ui.selectable_label(checked, device_name).clicked() {
+                        self.opt.ltc_device = Some(ltc_device.to_owned());
+                        self.opt.input_channel = ltc_device.get_default_channel();
+                    }
+                }),
+                None => {
+                    ui.label("No Audio Device Found");
+                }
+            });
     }
 
     fn config_input_channel(&mut self, ui: &mut Ui) {
-        match LTCListener::get_default_config() {
-            Ok((config, device)) => {
-                if let Ok(name) = device.name() {
-                    ui.label(format!("Audio Device: {}", name));
-                }
-
-                egui::ComboBox::from_label("Input Channel")
-                    .selected_text(format!("{}", self.opt.input_channel))
-                    .show_ui(ui, |ui| {
-                        for channel in (1..config.channels() + 1).collect::<Vec<u16>>().iter() {
-                            let checked = *channel as usize == self.opt.input_channel;
-                            if ui.selectable_label(checked, channel.to_string()).clicked() {
-                                self.opt.input_channel = *channel as usize;
-                            }
+        let label = self
+            .opt
+            .input_channel
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| "None Available".to_string());
+        egui::ComboBox::from_label("Input Channel")
+            .selected_text(format!("{}", label))
+            .show_ui(ui, |ui| match &self.opt.ltc_device {
+                Some(ltc_device) => {
+                    let config = &ltc_device.config;
+                    for channel in (1..config.channels() + 1).collect::<Vec<u16>>().iter() {
+                        let checked = Some(*channel as usize) == self.opt.input_channel;
+                        if ui.selectable_label(checked, channel.to_string()).clicked() {
+                            self.opt.input_channel = Some(*channel as usize);
                         }
-                    });
-            }
-            Err(e) => {
-                log::error!("Could not configure audio device: {e}");
-                ui.label("No Audio Device Found");
-                egui::ComboBox::from_label("Input Channel")
-                    .selected_text("No Device")
-                    .show_ui(ui, |_| {});
-            }
-        };
+                    }
+                }
+                None => {
+                    ui.label("No Audio Device Found");
+                }
+            });
     }
 
+    //TODO: this is kinda sloppy style
     fn config_buffer_size(&mut self, ui: &mut Ui) {
-        match LTCListener::get_buffer_opts() {
-            Ok(buf) => match buf {
+        match &self.opt.ltc_device {
+            Some(device) => match device.get_buffer_opts() {
                 Some(opts) => {
                     if self.opt.buffer_size.is_none()
                         || !opts.contains(&self.opt.buffer_size.unwrap())
@@ -157,7 +180,6 @@ impl App {
                         let mid = opts.get(opts.len() / 2);
                         self.opt.buffer_size = mid.copied();
                     };
-
                     egui::ComboBox::from_label("Buffer Size")
                         .selected_text(format!("{}", self.opt.buffer_size.unwrap_or(0)))
                         .show_ui(ui, |ui| {
@@ -173,8 +195,8 @@ impl App {
                     self.opt.buffer_size = None;
                 }
             },
-            Err(e) => {
-                log::error!("Could not get audio device config: {e}");
+            None => {
+                ui.label("No Audio Device Found");
             }
         };
     }
@@ -268,6 +290,8 @@ impl eframe::App for App {
                 self.config_storage_dir(ui);
                 ui.add_space(space);
                 ui.separator();
+                ui.add_space(space);
+                self.config_input_device(ui);
                 ui.add_space(space);
                 self.config_input_channel(ui);
                 ui.add_space(space);

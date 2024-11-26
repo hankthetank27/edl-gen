@@ -1,4 +1,5 @@
 use log::{LevelFilter, SetLoggerError};
+use ltc_decode::LTCDevice;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -60,16 +61,18 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Opt {
     pub title: String,
     pub dir: PathBuf,
     pub port: usize,
-    pub input_channel: usize,
     pub buffer_size: Option<u32>,
     pub sample_rate: usize,
     pub fps: f32,
     pub ntsc: edl::Fcm,
+    pub input_channel: Option<usize>,
+    pub ltc_device: Option<LTCDevice>,
+    pub ltc_devices: Option<Vec<LTCDevice>>,
 }
 
 impl Opt {
@@ -89,15 +92,21 @@ impl Opt {
 
 impl Default for Opt {
     fn default() -> Self {
+        let ltc_device = LTCDevice::get_default().ok();
+        let input_channel = ltc_device
+            .as_ref()
+            .and_then(|device| device.get_default_channel());
         Self {
             title: "my-video".into(),
             dir: Opt::make_default_dir(),
             port: 6969,
             buffer_size: Some(1024),
-            input_channel: 1,
             sample_rate: 44100,
             fps: 23.976,
             ntsc: edl::Fcm::NonDropFrame,
+            ltc_devices: LTCDevice::get_devices().ok(),
+            input_channel,
+            ltc_device,
         }
     }
 }

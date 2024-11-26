@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::SupportedBufferSize;
+use cpal::{Device, SupportedBufferSize};
 use ltc::{LTCDecoder, LTCFrame};
 use num_traits::cast::AsPrimitive;
 use std::collections::VecDeque;
@@ -11,59 +11,23 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 use crate::single_val_channel::{self, ChannelErr};
 use crate::Opt;
 
-pub struct LTCListener {
-    config: cpal::SupportedStreamConfig,
-    device: cpal::Device,
-    input_channel: InputChannel,
-    opt: Opt,
+#[derive(Clone)]
+pub struct LTCDevice {
+    pub config: cpal::SupportedStreamConfig,
+    pub device: cpal::Device,
 }
 
-impl LTCListener {
-    pub fn new(opt: Opt) -> Result<Self, Error> {
-        let (config, device) = LTCListener::get_default_config()?;
-
-        if opt.input_channel as u16 > config.channels() {
-            return Err(anyhow!(
-                "Invalid input channel: {}. Cannot exceed available channels on device {} with {} channels",
-                opt.input_channel,
-                device.name()?,
-                config.channels()
-            ));
-        }
-
-        let input_channel = InputChannel {
-            channel: opt.input_channel,
-            device_channels: config.channels() as usize,
-        };
-
-        log::info!(
-            "Input device: {}, Input channel: {}",
-            device.name()?,
-            opt.input_channel
-        );
-
-        Ok(LTCListener {
-            opt,
-            config,
-            device,
-            input_channel,
-        })
-    }
-
-    pub fn get_default_config() -> Result<(cpal::SupportedStreamConfig, cpal::Device), Error> {
-        let device = cpal::default_host()
+impl LTCDevice {
+    pub fn get_default() -> Result<Self, Error> {
+        cpal::default_host()
             .default_input_device()
-            .context("failed to find input device")?;
-        let config = device
-            .default_input_config()
-            .context("Failed to get default input config")?;
-        Ok((config, device))
+            .context("failed to find input device")?
+            .try_into()
     }
 
-    pub fn get_buffer_opts() -> Result<Option<Vec<u32>>, Error> {
-        let (config, _) = LTCListener::get_default_config()?;
-        let (min, max) = match config.buffer_size() {
-            SupportedBufferSize::Unknown => return Ok(None),
+    pub fn get_buffer_opts(&self) -> Option<Vec<u32>> {
+        let (min, max) = match self.config.buffer_size() {
+            SupportedBufferSize::Unknown => return None,
             SupportedBufferSize::Range { min, max } => (min, max),
         };
         let mut opts = vec![];
@@ -74,7 +38,69 @@ impl LTCListener {
             }
             n *= 2;
         }
-        Ok(Some(opts))
+        Some(opts)
+    }
+
+    pub fn get_devices() -> Result<Vec<LTCDevice>, Error> {
+        cpal::default_host()
+            .input_devices()?
+            .map(|device| LTCDevice::try_from(device))
+            .collect()
+    }
+
+    pub fn get_default_channel(&self) -> Option<usize> {
+        (self.config.channels() >= 1).then_some(1)
+    }
+}
+
+impl TryFrom<Device> for LTCDevice {
+    type Error = Error;
+    fn try_from(device: Device) -> Result<Self, Self::Error> {
+        let config = device
+            .default_input_config()
+            .context("Failed to get default input config")?;
+        Ok(LTCDevice { device, config })
+    }
+}
+
+pub struct LTCListener {
+    config: cpal::SupportedStreamConfig,
+    device: cpal::Device,
+    input_channel: InputChannel,
+    opt: Opt,
+}
+
+impl LTCListener {
+    pub fn new(mut opt: Opt) -> Result<Self, Error> {
+        let LTCDevice { config, device } = opt.ltc_device.take().context("No device available")?;
+        let input_channel_num = opt.input_channel.context("No channels available")?;
+
+        if input_channel_num as u16 > config.channels() {
+            return Err(anyhow!(
+                "Invalid input channel: {}. Cannot exceed available channels on device {} with {} channels",
+                input_channel_num,
+                device.name()?,
+                config.channels()
+            ));
+        }
+
+        let input_channel = InputChannel {
+            channel: input_channel_num,
+            device_channels: config.channels() as usize,
+        };
+
+        log::info!(
+            "Input device: {}, Input channel: {}",
+            device.name()?,
+            input_channel_num
+        );
+
+        Ok(LTCListener {
+            input_channel,
+            device,
+            config,
+            opt,
+        })
     }
 
     pub fn listen(self) -> DecodeHandlers {
@@ -254,7 +280,6 @@ impl DecodeContext {
     }
 }
 
-#[derive(Debug)]
 pub struct DecodeHandlers {
     pub tx_ltc_frame: single_val_channel::Sender<LTCFrame>,
     pub rx_ltc_frame: single_val_channel::Receiver<LTCFrame>,
