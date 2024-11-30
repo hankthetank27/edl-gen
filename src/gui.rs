@@ -127,11 +127,11 @@ impl App {
                 .unwrap_or_else(|_| "Device Has No Name".to_string()),
             None => "No Device Found".to_string(),
         };
-        let current_device_name = get_name(self.opt.ltc_device.as_ref().into());
+        let current_device_name = get_name(self.opt.ltc_device.as_ref());
         egui::ComboBox::from_label("Audio Device")
-            .selected_text(format!("{}", current_device_name))
+            .selected_text(current_device_name.to_string())
             .show_ui(ui, |ui| match &self.opt.ltc_devices {
-                Some(devices) => devices.into_iter().for_each(|ltc_device| {
+                Some(devices) => devices.iter().for_each(|ltc_device| {
                     let device_name = get_name(Some(ltc_device));
                     let checked = device_name == current_device_name;
                     if ui.selectable_label(checked, device_name).clicked() {
@@ -167,20 +167,19 @@ impl App {
             .opt
             .input_channel
             .map(|ch| ch.to_string())
-            .unwrap_or_else(|| "None Available".to_string());
+            .unwrap_or_else(|| "None Available".to_string())
+            .to_string();
         egui::ComboBox::from_label("Input Channel")
-            .selected_text(format!("{}", label))
+            .selected_text(label)
             .show_ui(ui, |ui| match &self.opt.ltc_device {
                 Some(ltc_device) => {
-                    (1..&ltc_device.config.channels() + 1)
-                        .into_iter()
-                        .for_each(|channel| {
-                            let channel = channel as usize;
-                            let checked = Some(channel) == self.opt.input_channel;
-                            if ui.selectable_label(checked, channel.to_string()).clicked() {
-                                self.opt.input_channel = Some(channel);
-                            }
-                        });
+                    (1..&ltc_device.config.channels() + 1).for_each(|channel| {
+                        let channel = channel as usize;
+                        let checked = Some(channel) == self.opt.input_channel;
+                        if ui.selectable_label(checked, channel.to_string()).clicked() {
+                            self.opt.input_channel = Some(channel);
+                        }
+                    });
                 }
                 None => {
                     ui.label("No Audio Device Found");
@@ -193,9 +192,10 @@ impl App {
             .opt
             .buffer_size
             .map(|ch| ch.to_string())
-            .unwrap_or_else(|| "None Available".to_string());
+            .unwrap_or_else(|| "None Available".to_string())
+            .to_string();
         egui::ComboBox::from_label("Buffer Size")
-            .selected_text(format!("{}", label))
+            .selected_text(label)
             .show_ui(ui, |ui| match &self.opt.ltc_device {
                 Some(device) => match device.get_buffer_opts() {
                     Some(opts) => opts.into_iter().for_each(|buffer| {
@@ -256,36 +256,27 @@ impl App {
         ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9999).text("TCP Port"));
     }
 
-    fn logger(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        let scroll = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .max_height(ui.available_height() - 2.0)
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                Logger::try_get_log(|logs| {
+    fn logger(&mut self, ui: &mut Ui) {
+        Logger::try_get_log(|logs| {
+            let scroll = egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .max_height(ui.available_height() - 2.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
                     logs.iter().for_each(|(level, string)| {
-                        let string_format = format!("{}", string);
                         match level {
-                            log::Level::Warn => {
-                                ui.colored_label(egui::Color32::YELLOW, string_format)
-                            }
-                            log::Level::Error => {
-                                ui.colored_label(egui::Color32::RED, string_format)
-                            }
-                            // log::Level::Info => {
-                            //     ui.colored_label(egui::Color32::LIGHT_YELLOW, string_format)
-                            // }
-                            _ => ui.label(string_format),
+                            log::Level::Warn => ui.colored_label(egui::Color32::YELLOW, string),
+                            log::Level::Error => ui.colored_label(egui::Color32::RED, string),
+                            _ => ui.label(string),
                         };
                     });
-                    ctx.request_repaint();
                 });
-            });
-        let frame = egui::Frame::none()
-            .fill(egui::Color32::from_rgba_premultiplied(18, 18, 18, 50))
-            .rounding(egui::Rounding::from(3.0))
-            .paint(scroll.inner_rect.expand2(egui::vec2(2.0, 3.0)));
-        ui.painter().add(frame);
+            let frame = egui::Frame::none()
+                .fill(egui::Color32::from_rgba_premultiplied(18, 18, 18, 50))
+                .rounding(egui::Rounding::from(3.0))
+                .paint(scroll.inner_rect.expand2(egui::vec2(2.0, 3.0)));
+            ui.painter().add(frame);
+        });
     }
 }
 
@@ -336,7 +327,7 @@ impl eframe::App for App {
             });
 
             ui.add_space(space);
-            self.logger(ui, ctx)
+            self.logger(ui)
         });
     }
 }

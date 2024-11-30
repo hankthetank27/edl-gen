@@ -53,7 +53,7 @@ impl LTCDevice {
     pub fn get_devices() -> Result<Vec<LTCDevice>, Error> {
         cpal::default_host()
             .input_devices()?
-            .map(|device| LTCDevice::try_from(device))
+            .map(LTCDevice::try_from)
             .collect()
     }
 

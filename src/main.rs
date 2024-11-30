@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Error};
 use eframe::egui;
 
-use edl_server::{gui::App, Logger};
+use edl_server::{gui::App, Logger, EGUI_CTX};
 
 fn main() -> Result<(), Error> {
     Logger::init()?;
@@ -16,8 +16,13 @@ fn main() -> Result<(), Error> {
     eframe::run_native(
         "EDL-Server",
         options,
-        Box::new(|_cc| {
-            log::info!("Welcome to EDL-Server!");
+        Box::new(|cc| {
+            // we assign EGUI_CTX as a global on gui init to have access to context
+            // for triggering repaints on logging
+            if let Ok(mut ctx) = EGUI_CTX.lock() {
+                *ctx = cc.egui_ctx.clone();
+            }
+            log::info!("Welcome to edl-server!");
             Box::new(App::default())
         }),
     )
