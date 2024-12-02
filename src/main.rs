@@ -14,7 +14,7 @@ fn main() -> Result<(), Error> {
     };
 
     eframe::run_native(
-        "EDL-Server",
+        "EDL Server",
         options,
         Box::new(|cc| {
             // we assign EGUI_CTX as a global on gui init to have access to context
@@ -22,7 +22,7 @@ fn main() -> Result<(), Error> {
             if let Ok(mut ctx) = EGUI_CTX.lock() {
                 *ctx = cc.egui_ctx.clone();
             }
-            log::info!("Welcome to edl-server!");
+            log::info!("Welcome to EDL Server!");
             Box::new(App::default())
         }),
     )

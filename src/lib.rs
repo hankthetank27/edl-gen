@@ -3,7 +3,7 @@ use log::{LevelFilter, SetLoggerError};
 use ltc_decode::{DefaultConfigs, LTCDevice};
 
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 
 pub mod edl;
 pub mod frame_queue;
@@ -15,8 +15,8 @@ pub mod single_val_channel;
 type GlobalLog = Vec<(log::Level, String)>;
 
 pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
-pub static EGUI_CTX: LazyLock<Arc<Mutex<egui::Context>>> =
-    std::sync::LazyLock::new(|| Arc::new(Mutex::new(egui::Context::default())));
+pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
+    std::sync::LazyLock::new(|| Mutex::new(egui::Context::default()));
 
 pub struct Logger;
 

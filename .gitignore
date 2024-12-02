@@ -2,3 +2,4 @@
 /edl-dump
 .DS_Store
 flamegraph*
+build-asio.sh

@@ -11,6 +11,8 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 use crate::single_val_channel::{self, ChannelErr};
 use crate::Opt;
 
+// const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
+
 #[derive(Clone)]
 pub struct LTCDevice {
     pub config: cpal::SupportedStreamConfig,
@@ -18,8 +20,19 @@ pub struct LTCDevice {
 }
 
 impl LTCDevice {
+    fn default_host() -> cpal::Host {
+        #[allow(unused_mut)]
+        let mut host = cpal::default_host();
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(windows_host) = cpal::host_from_id(cpal::HostId::Asio) {
+                host = windows_host;
+            }
+        }
+        host
+    }
     pub fn get_default() -> Result<Self, Error> {
-        cpal::default_host()
+        LTCDevice::default_host()
             .default_input_device()
             .context("failed to find input device")?
             .try_into()
@@ -51,7 +64,7 @@ impl LTCDevice {
     }
 
     pub fn get_devices() -> Result<Vec<LTCDevice>, Error> {
-        cpal::default_host()
+        LTCDevice::default_host()
             .input_devices()?
             .map(LTCDevice::try_from)
             .collect()
