@@ -1,5 +1,6 @@
 /target
 /edl-dump
+/dist
 .DS_Store
 flamegraph*
 build-asio.sh
