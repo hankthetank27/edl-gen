@@ -15,6 +15,8 @@ Coming soon...
 ### TODO: ###
 - Save settings
 - BitFocus Companion module
-- Improve logging (colors formating etc)
-- Limit log size
+- Improve logging 
+    - Colors, formating etc
+    - Render log scroll area with egui rows
+    - Limit log size
 - Handle speed changes
