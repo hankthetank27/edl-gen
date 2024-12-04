@@ -17,6 +17,6 @@ Coming soon...
 - BitFocus Companion module
 - Improve logging 
     - Colors, formating etc
-    - Render log scroll area with egui rows
+    - Render scroll area with egui rows
     - Limit log size
 - Handle speed changes

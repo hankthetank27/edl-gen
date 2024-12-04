@@ -16,7 +16,7 @@ type GlobalLog = Vec<(log::Level, String)>;
 
 pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
 pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
-    std::sync::LazyLock::new(|| Mutex::new(egui::Context::default()));
+    LazyLock::new(|| Mutex::new(egui::Context::default()));
 
 pub struct Logger;
 
