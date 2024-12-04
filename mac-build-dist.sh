@@ -9,7 +9,6 @@ else
     exit 1
 fi
 
-# Verify required environment variables
 if [ -z "$APPLE_ID" ] || [ -z "$APP_SPECIFIC_PASSWORD" ]; then
     echo "Error: APPLE_ID and APP_SPECIFIC_PASSWORD must be set in .env file"
     exit 1
@@ -57,7 +56,7 @@ echo "Universal binary created at $DIST_DIR/$PROJECT_NAME"
 echo "Verifying architectures..."
 lipo -info "$DIST_DIR/$PROJECT_NAME"
 
-APP_NAME="EDL Server"
+APP_NAME="EDLgen"
 BUNDLE_ID="com.hankjackson.edlserver"
 VERSION="0.1.0"
 COPYRIGHT="© 2024 Hank Jackson. All rights reserved."
@@ -157,4 +156,4 @@ notarize() {
 
 create_dmg
 
-echo "Done! Your app bundle is ready at $APP_BUNDLE"
+echo "Your app bundle is ready at $APP_BUNDLE"
