@@ -152,10 +152,7 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
                         .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
                     from,
                     to,
-                    wipe_number: value.in_.wipe_num.map_or_else(
-                        || Err(anyhow!("Edit type 'wipe' expected wipe number")),
-                        Ok,
-                    )?,
+                    wipe_number: value.in_.wipe_num.unwrap_or(1),
                 }))
             }
         }

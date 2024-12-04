@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Exit on error
 set -e
 
 if ! command -v cargo &> /dev/null; then
@@ -21,7 +20,7 @@ mkdir -p $X86_DIST_DIR
 cargo clean
 cargo build --target x86_64-pc-windows-gnu -r
 
-cp target/x86_64-pc-windows-gnu/release/*.exe dist/x86_64-pc-windows-gnu
+cp target/x86_64-pc-windows-gnu/release/*.exe $X86_DIST_DIR
 
 cp "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/lib/libstdc++-6.dll" $X86_DIST_DIR
 cp "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/lib/libgcc_s_seh-1.dll" $X86_DIST_DIR

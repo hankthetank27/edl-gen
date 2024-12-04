@@ -276,7 +276,6 @@ impl EditRequestData {
         ctx.frame_queue.push(tc, self)?;
         let prev_record = ctx.frame_queue.pop().context("No value in frame_queue")?;
         let curr_record = ctx.frame_queue.front().context("No value in frame_queue")?;
-
         Ok(Edit::try_from(FrameDataPair::new(
             &prev_record,
             curr_record,

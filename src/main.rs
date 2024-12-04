@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Error};
 use eframe::egui;
 
-use edl_server::{gui::App, Logger, EGUI_CTX};
+use edl_gen::{gui::App, Logger, EGUI_CTX};
 
 fn main() -> Result<(), Error> {
     Logger::init()?;
