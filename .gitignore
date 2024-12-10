@@ -1,6 +1,8 @@
 /target
 /edl-dump
 /dist
+/build
+/output
 .DS_Store
 flamegraph*
 /.env
