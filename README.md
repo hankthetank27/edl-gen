@@ -8,7 +8,7 @@ EDLgen is a video broadcast, streaming and editing tool for generating EDL (Edit
 
 ### From Package ###
 
-Coming soon...
+The most recent pre-built binaries can be found [here](https://github.com/hankthetank27/edl-gen/releases/latest).
 
 ### From Source ###
 
