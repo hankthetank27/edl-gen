@@ -23,7 +23,7 @@ CARGO_TARGET_DIR=target cargo build --release --target aarch64-apple-darwin
 echo
 
 mkdir -p build/macos/
-cp target/x86_64-apple-darwin/release/$PROJECT_NAME build/macos/
-cp target/aarch64-apple-darwin/release/$PROJECT_NAME build/macos/
+# cp target/x86_64-apple-darwin/release/$PROJECT_NAME build/macos/$PROJECT_NAME-x86_64
+cp target/aarch64-apple-darwin/release/$PROJECT_NAME build/macos/$PROJECT_NAME-aarch64
 
 echo "MacOS x86_64-apple-darwin and aarch64-apple-darwin builds are ready at /build/macos/"

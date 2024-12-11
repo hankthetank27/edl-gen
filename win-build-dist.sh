@@ -5,14 +5,18 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
+TEMP_DIR=${TMPDIR:-/tmp}
+if [ -d "$TEMP_DIR/asio_sdk" ]; then
+    rm -rf "$TEMP_DIR/asio_sdk"
+fi
+
+export CPAL_ASIO_DIR="$PWD/asio-sys/asiosdk_2.3.3/"
 export CPLUS_INCLUDE_PATH="/opt/homebrew/cellar/mingw-w64/12.0.0_1/toolchain-x86_64/x86_64-w64-mingw32/include/"
-# export CPLUS_INCLUDE_PATH="$CPLUS_INCLUDE_PATH:/opt/homebrew/Cellar/mingw-w64/12.0.0_1/toolchain-i686/i686-w64-mingw32/include/"
 export CPLUS_INCLUDE_PATH="$CPLUS_INCLUDE_PATH:/opt/homebrew/opt/llvm/include/"
 
-
-# x86_64-pc-windows-gnu
 X86_BUILD_DIR="build/win/x86_64-pc-windows-gnu"
 
+set - e 
 mkdir -p $X86_BUILD_DIR
 
 cargo clean
@@ -26,8 +30,9 @@ cp "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/bin/libwinpt
 
 echo "64-bit MinGW Windows build complete!"
 
-
 # i686-pc-windows-gnu
+# export CPLUS_INCLUDE_PATH="$CPLUS_INCLUDE_PATH:/opt/homebrew/Cellar/mingw-w64/12.0.0_1/toolchain-i686/i686-w64-mingw32/include/"
+#
 # echo
 # mkdir -p dist/i686-pc-windows-gnu
 
