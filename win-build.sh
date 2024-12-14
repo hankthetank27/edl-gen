@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set - e 
+
 if ! command -v cargo &> /dev/null; then
     echo "cargo is not installed. Please install Rust first."
     exit 1
@@ -15,7 +17,6 @@ export CPLUS_INCLUDE_PATH="$CPLUS_INCLUDE_PATH:/opt/homebrew/opt/llvm/include/"
 
 X86_BUILD_DIR="build/win/x86_64-pc-windows-gnu"
 
-set - e 
 mkdir -p $X86_BUILD_DIR
 
 cargo clean
