@@ -124,7 +124,6 @@ A JSON payload can be sent to any of the following endpoints via HTTP POST to tr
 
 ### Planned Features and TODO ###
 - BitFocus Companion module
-- Software update notification
 - Save settings
 - Handle speed changes
 - Improved logging 

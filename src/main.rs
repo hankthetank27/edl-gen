@@ -1,5 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 use anyhow::{anyhow, Error};
 use eframe::egui;
 
@@ -22,7 +21,8 @@ fn main() -> Result<(), Error> {
             if let Ok(mut ctx) = EGUI_CTX.lock() {
                 *ctx = cc.egui_ctx.clone();
             }
-            log::info!("Welcome to EDLgen!");
+            let version = env!("CARGO_PKG_VERSION");
+            log::info!("Welcome to EDLgen v{version}!");
             Box::new(App::default())
         }),
     )
