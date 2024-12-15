@@ -11,6 +11,7 @@ pub mod gui;
 pub mod ltc_decode;
 pub mod server;
 pub mod single_val_channel;
+pub mod update_version;
 
 type GlobalLog = Vec<(log::Level, String)>;
 

@@ -4,12 +4,16 @@ use eframe::egui::{self, mutex::Mutex, Ui};
 use ltc::LTCFrame;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::{mpsc, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc,
+};
 use std::thread::{self, JoinHandle};
 
 use crate::ltc_decode::{DefaultConfigs, LTCDevice, LTCListener};
 use crate::server::Server;
 use crate::single_val_channel;
+use crate::update_version;
 use crate::Logger;
 use crate::{edl, Opt};
 
@@ -20,6 +24,7 @@ pub struct App {
     rx_serv_stopped: mpsc::Receiver<()>,
     tx_ltc_frame: Option<single_val_channel::Sender<LTCFrame>>,
     server_handle: Option<JoinHandle<Result<(), Error>>>,
+    is_current_version: Arc<AtomicBool>,
     opt: Opt,
 }
 
@@ -27,6 +32,14 @@ impl Default for App {
     fn default() -> Self {
         let (tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
         let (tx_serv_stopped, rx_serv_stopped) = mpsc::channel::<()>();
+        let is_current_version = Arc::new(AtomicBool::new(true));
+
+        let is_current_version_check = Arc::clone(&is_current_version);
+        thread::spawn(move || match update_version::update_available() {
+            Ok(is_available) => is_current_version_check.store(!is_available, Ordering::Relaxed),
+            Err(e) => eprintln!("{e}"),
+        });
+
         App {
             server_handle: None,
             rx_stop_serv: Arc::new(Mutex::new(rx_stop_serv)),
@@ -34,6 +47,7 @@ impl Default for App {
             tx_stop_serv,
             tx_serv_stopped,
             rx_serv_stopped,
+            is_current_version,
             opt: Opt::default(),
         }
     }
@@ -285,6 +299,19 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             let space = 10.0;
             ui.heading("EDLgen");
+
+            if !self.is_current_version.load(Ordering::Relaxed) {
+                ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
+                    if ui
+                        .link("Update available! Click to install and restart EDLgen.")
+                        .clicked()
+                    {
+                        if let Err(e) = update_version::update() {
+                            eprintln!("{}", e);
+                        }
+                    }
+                });
+            }
 
             ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
                 ui.add_space(space);

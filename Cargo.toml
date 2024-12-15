@@ -1,8 +1,12 @@
 [package]
+authors = ["Hank Jackson <hjackson277@gmail.com>"]
 name = "edl-gen"
-version = "0.1.2"
+version = "0.0.1"
 edition = "2021"
 build = "build.rs"
+readme = "README.md"
+repository = "https://github.com/hankthetank27/edl-gen/"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -12,10 +16,14 @@ cpal = { git = "https://github.com/RustAudio/cpal.git", rev = "582e93c41d6073df5
 dirs = "5.0.1"
 eframe = "0.27.2"
 httparse = "1.8.0"
+libloading = "0.8.6"
 log = "0.4.21"
 ltc = "0.2.0"
+minreq = {version = "2.13.0", features = ["https", "json-using-serde"]}
 num-traits = "0.2.19"
 rfd = "0.14.1"
+semver = "1.0.24"
 serde = {version = "1.0.203", features = ["derive"]}
 serde_json = "1.0.117"
 vtc = "0.1.13"
+
