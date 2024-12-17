@@ -5,6 +5,8 @@ use eframe::egui;
 use edl_gen::{gui::App, Logger, EGUI_CTX};
 
 fn main() -> Result<(), Error> {
+    let start = std::time::Instant::now();
+
     Logger::init()?;
 
     let options = eframe::NativeOptions {
@@ -15,15 +17,16 @@ fn main() -> Result<(), Error> {
     eframe::run_native(
         "EDLgen",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             // we assign EGUI_CTX as a global on gui init to have access to context
             // for triggering repaints on logging
             if let Ok(mut ctx) = EGUI_CTX.lock() {
                 *ctx = cc.egui_ctx.clone();
             }
-            let version = env!("CARGO_PKG_VERSION");
-            log::info!("Welcome to EDLgen v{version}!");
-            Box::new(App::default())
+            log::info!("Welcome to EDLgen v{}!", env!("CARGO_PKG_VERSION"));
+            let app = Box::new(App::default());
+            println!("startup took {:?}", start.elapsed());
+            app
         }),
     )
     .map_err(|e| anyhow!("Could not initate UI: {}", e))
