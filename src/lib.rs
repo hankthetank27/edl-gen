@@ -124,12 +124,32 @@ impl Opt {
             })
     }
 
+    fn default_port() -> usize {
+        DB.as_ref()
+            .and_then(|db| db.get(StoredOpts::Port.as_bytes()).ok())
+            .and_then(|opt| opt)
+            .and_then(|val| {
+                std::str::from_utf8(&val.to_vec())
+                    .unwrap()
+                    .parse::<usize>()
+                    .ok()
+            })
+            .unwrap_or(7890)
+    }
+
     fn set_dir(&mut self, path: PathBuf) {
         if let Some(path) = path.to_str() {
             DB.as_ref()
-                .and_then(|db| db.insert(StoredOpts::Dir.as_bytes(), path).ok());
+                .map(|db| db.insert(StoredOpts::Dir.as_bytes(), path));
         }
         self.dir = path;
+    }
+
+    fn set_port(&mut self, port: usize) -> usize {
+        DB.as_ref()
+            .map(|db| db.insert(StoredOpts::Port.as_bytes(), port.to_string().as_bytes()));
+        self.port = port;
+        port
     }
 }
 
@@ -143,7 +163,7 @@ impl Default for Opt {
         Self {
             title: "my-video".into(),
             dir: Opt::default_dir(),
-            port: 7890,
+            port: Opt::default_port(),
             sample_rate: 44100,
             fps: 23.976,
             ntsc: edl::Fcm::NonDropFrame,

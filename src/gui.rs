@@ -267,7 +267,14 @@ impl App {
     }
 
     fn config_tcp_port(&mut self, ui: &mut Ui) {
-        ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9999).text("TCP Port"));
+        ui.add(
+            egui::Slider::from_get_set(3000.0..=9999.0, |port| {
+                //TODO: can we debounce this? its a lot of db inserts..
+                port.map(|port| self.opt.set_port(port as usize))
+                    .unwrap_or(self.opt.port) as f64
+            })
+            .text("TCP Port"),
+        );
     }
 
     fn logger(&mut self, ui: &mut Ui) {

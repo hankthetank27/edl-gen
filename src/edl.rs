@@ -72,8 +72,8 @@ pub enum Fcm {
 impl From<Fcm> for String {
     fn from(value: Fcm) -> Self {
         match value {
-            Fcm::DropFrame => "DROP FRAME",
-            Fcm::NonDropFrame => "NON-DROP FRAME",
+            Fcm::DropFrame => "Drop Frame",
+            Fcm::NonDropFrame => "Non-Drop Frame",
         }
         .into()
     }

@@ -6,6 +6,7 @@ use edl_gen::{gui::App, Logger, EGUI_CTX};
 
 fn main() -> Result<(), Error> {
     let start = std::time::Instant::now();
+
     Logger::init()?;
 
     let options = eframe::NativeOptions {
@@ -22,11 +23,10 @@ fn main() -> Result<(), Error> {
             if let Ok(mut ctx) = EGUI_CTX.lock() {
                 *ctx = cc.egui_ctx.clone();
             }
-
-            println!("startup took {:?}", start.elapsed());
-
             log::info!("Welcome to EDLgen v{}!", env!("CARGO_PKG_VERSION"));
-            Box::new(App::default())
+            let app = Box::new(App::default());
+            println!("startup took {:?}", start.elapsed());
+            app
         }),
     )
     .map_err(|e| anyhow!("Could not initate UI: {}", e))
