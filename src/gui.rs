@@ -127,7 +127,7 @@ impl App {
     fn config_storage_dir(&mut self, ui: &mut Ui) {
         if ui.button("Storage Directory").clicked() {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                self.opt.dir = path;
+                self.opt.set_dir(path);
             }
         }
         ui.label(self.opt.dir.to_str().unwrap_or("Dir"));

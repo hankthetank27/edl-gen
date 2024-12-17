@@ -16,6 +16,8 @@ pub mod update_version;
 type GlobalLog = Vec<(log::Level, String)>;
 
 pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
+pub static DB: LazyLock<Option<sled::Db>> =
+    LazyLock::new(|| sled::open(dirs::preference_dir()?).ok());
 pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
     LazyLock::new(|| Mutex::new(egui::Context::default()));
 
@@ -68,6 +70,31 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
+#[allow(dead_code)]
+enum StoredOpts {
+    Dir,
+    Port,
+    SampeRate,
+    Fps,
+    Ntsc,
+    LTCDevice,
+    InputChannel,
+}
+
+impl StoredOpts {
+    fn as_bytes(&self) -> &'static [u8] {
+        match self {
+            StoredOpts::Dir => b"d",
+            StoredOpts::Port => b"p",
+            StoredOpts::SampeRate => b"s",
+            StoredOpts::Fps => b"f",
+            StoredOpts::Ntsc => b"n",
+            StoredOpts::LTCDevice => b"l",
+            StoredOpts::InputChannel => b"i",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Opt {
     pub title: String,
@@ -83,17 +110,26 @@ pub struct Opt {
 }
 
 impl Opt {
-    fn make_default_dir() -> PathBuf {
-        match dirs::home_dir() {
-            Some(mut home) => {
-                home.push("Desktop");
-                if !home.is_dir() {
-                    home.pop();
-                };
-                home
-            }
-            None => PathBuf::from("/"),
+    fn default_dir() -> PathBuf {
+        DB.as_ref()
+            .and_then(|db| db.get(StoredOpts::Dir.as_bytes()).ok())
+            .and_then(|opt| opt)
+            .and_then(|val| String::from_utf8(val.to_vec()).ok())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::document_dir()
+                    .or_else(dirs::desktop_dir)
+                    .or_else(dirs::home_dir)
+                    .unwrap_or_else(|| PathBuf::from("/"))
+            })
+    }
+
+    fn set_dir(&mut self, path: PathBuf) {
+        if let Some(path) = path.to_str() {
+            DB.as_ref()
+                .and_then(|db| db.insert(StoredOpts::Dir.as_bytes(), path).ok());
         }
+        self.dir = path;
     }
 }
 
@@ -106,8 +142,8 @@ impl Default for Opt {
         } = LTCDevice::get_default_configs();
         Self {
             title: "my-video".into(),
-            dir: Opt::make_default_dir(),
-            port: 6969,
+            dir: Opt::default_dir(),
+            port: 7890,
             sample_rate: 44100,
             fps: 23.976,
             ntsc: edl::Fcm::NonDropFrame,
