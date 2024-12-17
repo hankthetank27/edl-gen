@@ -10,12 +10,12 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use crate::ltc_decode::{DefaultConfigs, LTCDevice, LTCListener};
-use crate::server::Server;
-use crate::single_val_channel;
-use crate::update_version;
-use crate::Logger;
-use crate::{edl, Opt};
+use crate::{
+    edl,
+    ltc_decode::{DefaultConfigs, LTCDevice, LTCListener},
+    server::Server,
+    single_val_channel, update_version, Logger, Opt, StoredOpts, WriteChange,
+};
 
 pub struct App {
     rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
@@ -127,7 +127,8 @@ impl App {
     fn config_storage_dir(&mut self, ui: &mut Ui) {
         if ui.button("Storage Directory").clicked() {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                self.opt.set_dir(path);
+                self.opt.dir = path;
+                self.opt.write_dir();
             }
         }
         ui.label(self.opt.dir.to_str().unwrap_or("Dir"));
@@ -232,8 +233,10 @@ impl App {
         egui::ComboBox::from_label("LTC Input Sample Rate")
             .selected_text(format!("{:?}hz", self.opt.sample_rate))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.opt.sample_rate, 44100, "44100hz");
-                ui.selectable_value(&mut self.opt.sample_rate, 48000, "48000hz");
+                ui.selectable_value(&mut self.opt.sample_rate, 44_100, "44100hz")
+                    .write_on_change(&self.opt, StoredOpts::SampleRate);
+                ui.selectable_value(&mut self.opt.sample_rate, 48_000, "48000hz")
+                    .write_on_change(&self.opt, StoredOpts::SampleRate);
             });
     }
 
@@ -267,14 +270,8 @@ impl App {
     }
 
     fn config_tcp_port(&mut self, ui: &mut Ui) {
-        ui.add(
-            egui::Slider::from_get_set(3000.0..=9999.0, |port| {
-                //TODO: can we debounce this? its a lot of db inserts..
-                port.map(|port| self.opt.set_port(port as usize))
-                    .unwrap_or(self.opt.port) as f64
-            })
-            .text("TCP Port"),
-        );
+        ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9999).text("TCP Port"))
+            .write_on_change(&self.opt, StoredOpts::Port);
     }
 
     fn logger(&mut self, ui: &mut Ui) {

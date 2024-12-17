@@ -1,9 +1,12 @@
+use anyhow::{Context, Error};
 use eframe::egui;
 use log::{LevelFilter, SetLoggerError};
 use ltc_decode::{DefaultConfigs, LTCDevice};
 
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
+use std::usize;
 
 pub mod edl;
 pub mod frame_queue;
@@ -17,9 +20,18 @@ type GlobalLog = Vec<(log::Level, String)>;
 
 pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
 pub static DB: LazyLock<Option<sled::Db>> =
-    LazyLock::new(|| sled::open(dirs::preference_dir()?).ok());
+    LazyLock::new(|| sled::open(get_or_make_prefs_dir()?).ok());
 pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
     LazyLock::new(|| Mutex::new(egui::Context::default()));
+
+fn get_or_make_prefs_dir() -> Option<PathBuf> {
+    let edl_prefs = dirs::preference_dir()?.join("edl-gen/");
+    if edl_prefs.exists() || fs::create_dir_all(&edl_prefs).is_ok() {
+        Some(edl_prefs)
+    } else {
+        None
+    }
+}
 
 pub struct Logger;
 
@@ -74,7 +86,7 @@ impl log::Log for Logger {
 enum StoredOpts {
     Dir,
     Port,
-    SampeRate,
+    SampleRate,
     Fps,
     Ntsc,
     LTCDevice,
@@ -86,12 +98,39 @@ impl StoredOpts {
         match self {
             StoredOpts::Dir => b"d",
             StoredOpts::Port => b"p",
-            StoredOpts::SampeRate => b"s",
+            StoredOpts::SampleRate => b"s",
             StoredOpts::Fps => b"f",
             StoredOpts::Ntsc => b"n",
             StoredOpts::LTCDevice => b"l",
             StoredOpts::InputChannel => b"i",
         }
+    }
+}
+
+impl TryFrom<StoredOpts> for usize {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.as_ref()
+            .and_then(|db| db.get(stored_opts.as_bytes()).ok())
+            .flatten()
+            .and_then(|val| {
+                std::str::from_utf8(&val.to_vec())
+                    .ok()?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .context("Could not get")
+    }
+}
+
+impl TryFrom<StoredOpts> for String {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.as_ref()
+            .and_then(|db| db.get(stored_opts.as_bytes()).ok())
+            .flatten()
+            .and_then(|val| String::from_utf8(val.to_vec()).ok())
+            .context("Could not get")
     }
 }
 
@@ -111,12 +150,9 @@ pub struct Opt {
 
 impl Opt {
     fn default_dir() -> PathBuf {
-        DB.as_ref()
-            .and_then(|db| db.get(StoredOpts::Dir.as_bytes()).ok())
-            .and_then(|opt| opt)
-            .and_then(|val| String::from_utf8(val.to_vec()).ok())
+        String::try_from(StoredOpts::Dir)
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
+            .unwrap_or_else(|_| {
                 dirs::document_dir()
                     .or_else(dirs::desktop_dir)
                     .or_else(dirs::home_dir)
@@ -125,31 +161,36 @@ impl Opt {
     }
 
     fn default_port() -> usize {
-        DB.as_ref()
-            .and_then(|db| db.get(StoredOpts::Port.as_bytes()).ok())
-            .and_then(|opt| opt)
-            .and_then(|val| {
-                std::str::from_utf8(&val.to_vec())
-                    .unwrap()
-                    .parse::<usize>()
-                    .ok()
-            })
-            .unwrap_or(7890)
+        usize::try_from(StoredOpts::Port).unwrap_or(7890)
     }
 
-    fn set_dir(&mut self, path: PathBuf) {
-        if let Some(path) = path.to_str() {
+    fn default_sample_rate() -> usize {
+        usize::try_from(StoredOpts::SampleRate).unwrap_or(44_100)
+    }
+
+    fn write_dir(&self) {
+        if let Some(path) = self.dir.to_str() {
             DB.as_ref()
                 .map(|db| db.insert(StoredOpts::Dir.as_bytes(), path));
         }
-        self.dir = path;
     }
 
-    fn set_port(&mut self, port: usize) -> usize {
-        DB.as_ref()
-            .map(|db| db.insert(StoredOpts::Port.as_bytes(), port.to_string().as_bytes()));
-        self.port = port;
-        port
+    fn write_port(&self) {
+        DB.as_ref().map(|db| {
+            db.insert(
+                StoredOpts::Port.as_bytes(),
+                self.port.to_string().as_bytes(),
+            )
+        });
+    }
+
+    fn write_sample_rate(&self) {
+        DB.as_ref().map(|db| {
+            db.insert(
+                StoredOpts::SampleRate.as_bytes(),
+                self.sample_rate.to_string().as_bytes(),
+            )
+        });
     }
 }
 
@@ -164,13 +205,33 @@ impl Default for Opt {
             title: "my-video".into(),
             dir: Opt::default_dir(),
             port: Opt::default_port(),
-            sample_rate: 44100,
+            sample_rate: Opt::default_sample_rate(),
             fps: 23.976,
             ntsc: edl::Fcm::NonDropFrame,
             ltc_devices: LTCDevice::get_devices().ok(),
             buffer_size,
             input_channel,
             ltc_device,
+        }
+    }
+}
+
+trait WriteChange {
+    fn write_on_change(&self, opt: &Opt, stored_opt: StoredOpts);
+}
+
+impl WriteChange for egui::Response {
+    fn write_on_change(&self, opt: &Opt, stored_opt: StoredOpts) {
+        if self.changed() {
+            match stored_opt {
+                StoredOpts::Dir => opt.write_dir(),
+                StoredOpts::Port => opt.write_port(),
+                StoredOpts::SampleRate => opt.write_sample_rate(),
+                StoredOpts::Fps => todo!(),
+                StoredOpts::Ntsc => todo!(),
+                StoredOpts::LTCDevice => todo!(),
+                StoredOpts::InputChannel => todo!(),
+            };
         }
     }
 }

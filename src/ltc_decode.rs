@@ -27,7 +27,6 @@ impl LTCDevice {
         if let Ok(windows_host) = cpal::host_from_id(cpal::HostId::Asio) {
             host = windows_host;
         }
-
         host
     }
     pub fn get_default() -> Result<Self, Error> {
@@ -65,7 +64,7 @@ impl LTCDevice {
     pub fn get_devices() -> Result<Vec<LTCDevice>, Error> {
         LTCDevice::default_host()
             .input_devices()?
-            .map(|device| LTCDevice::try_from(device))
+            .map(LTCDevice::try_from)
             .collect()
     }
 
