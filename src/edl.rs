@@ -69,13 +69,29 @@ pub enum Fcm {
     NonDropFrame,
 }
 
-impl From<Fcm> for String {
+impl From<Fcm> for &str {
     fn from(value: Fcm) -> Self {
         match value {
             Fcm::DropFrame => "Drop Frame",
             Fcm::NonDropFrame => "Non-Drop Frame",
         }
-        .into()
+    }
+}
+
+impl From<Fcm> for String {
+    fn from(value: Fcm) -> Self {
+        <&str>::from(value).into()
+    }
+}
+
+impl TryFrom<&str> for Fcm {
+    type Error = Error;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            x if x == <&str>::from(Fcm::NonDropFrame) => Ok(Fcm::NonDropFrame),
+            x if x == <&str>::from(Fcm::DropFrame) => Ok(Fcm::DropFrame),
+            _ => Err(anyhow!("Invalid conversion")),
+        }
     }
 }
 

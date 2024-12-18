@@ -3,10 +3,12 @@ use eframe::egui;
 use log::{LevelFilter, SetLoggerError};
 use ltc_decode::{DefaultConfigs, LTCDevice};
 
+use crate::edl::Fcm;
+
 use std::fs;
 use std::path::PathBuf;
+use std::str;
 use std::sync::{LazyLock, Mutex};
-use std::usize;
 
 pub mod edl;
 pub mod frame_queue;
@@ -18,18 +20,38 @@ pub mod update_version;
 
 type GlobalLog = Vec<(log::Level, String)>;
 
+pub static DB: LazyLock<Db> = LazyLock::new(|| Db::default());
 pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
-pub static DB: LazyLock<Option<sled::Db>> =
-    LazyLock::new(|| sled::open(get_or_make_prefs_dir()?).ok());
 pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
     LazyLock::new(|| Mutex::new(egui::Context::default()));
 
-fn get_or_make_prefs_dir() -> Option<PathBuf> {
-    let edl_prefs = dirs::preference_dir()?.join("edl-gen/");
-    if edl_prefs.exists() || fs::create_dir_all(&edl_prefs).is_ok() {
-        Some(edl_prefs)
-    } else {
-        None
+pub struct Db(Option<sled::Db>);
+
+impl Db {
+    fn as_ref(&self) -> Option<&sled::Db> {
+        self.0.as_ref()
+    }
+
+    fn get_from_stored_opts(&self, stored_opts: StoredOpts) -> Result<sled::IVec, Error> {
+        self.as_ref()
+            .and_then(|db| db.get(stored_opts.as_bytes()).ok())
+            .flatten()
+            .context("Could not get value from db")
+    }
+
+    fn get_or_make_prefs_dir() -> Option<PathBuf> {
+        let edl_prefs = dirs::preference_dir()?.join("edl-gen/");
+        if edl_prefs.exists() || fs::create_dir_all(&edl_prefs).is_ok() {
+            Some(edl_prefs)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for Db {
+    fn default() -> Self {
+        Db(Db::get_or_make_prefs_dir().and_then(|dir| sled::open(dir).ok()))
     }
 }
 
@@ -82,58 +104,6 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
-#[allow(dead_code)]
-enum StoredOpts {
-    Dir,
-    Port,
-    SampleRate,
-    Fps,
-    Ntsc,
-    LTCDevice,
-    InputChannel,
-}
-
-impl StoredOpts {
-    fn as_bytes(&self) -> &'static [u8] {
-        match self {
-            StoredOpts::Dir => b"d",
-            StoredOpts::Port => b"p",
-            StoredOpts::SampleRate => b"s",
-            StoredOpts::Fps => b"f",
-            StoredOpts::Ntsc => b"n",
-            StoredOpts::LTCDevice => b"l",
-            StoredOpts::InputChannel => b"i",
-        }
-    }
-}
-
-impl TryFrom<StoredOpts> for usize {
-    type Error = Error;
-    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
-        DB.as_ref()
-            .and_then(|db| db.get(stored_opts.as_bytes()).ok())
-            .flatten()
-            .and_then(|val| {
-                std::str::from_utf8(&val.to_vec())
-                    .ok()?
-                    .parse::<usize>()
-                    .ok()
-            })
-            .context("Could not get")
-    }
-}
-
-impl TryFrom<StoredOpts> for String {
-    type Error = Error;
-    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
-        DB.as_ref()
-            .and_then(|db| db.get(stored_opts.as_bytes()).ok())
-            .flatten()
-            .and_then(|val| String::from_utf8(val.to_vec()).ok())
-            .context("Could not get")
-    }
-}
-
 #[derive(Clone)]
 pub struct Opt {
     pub title: String,
@@ -161,36 +131,19 @@ impl Opt {
     }
 
     fn default_port() -> usize {
-        usize::try_from(StoredOpts::Port).unwrap_or(7890)
+        StoredOpts::Port.try_into().unwrap_or(7890)
     }
 
     fn default_sample_rate() -> usize {
-        usize::try_from(StoredOpts::SampleRate).unwrap_or(44_100)
+        StoredOpts::SampleRate.try_into().unwrap_or(44_100)
     }
 
-    fn write_dir(&self) {
-        if let Some(path) = self.dir.to_str() {
-            DB.as_ref()
-                .map(|db| db.insert(StoredOpts::Dir.as_bytes(), path));
-        }
+    fn default_frame_rate() -> f32 {
+        StoredOpts::Fps.try_into().unwrap_or(23.976)
     }
 
-    fn write_port(&self) {
-        DB.as_ref().map(|db| {
-            db.insert(
-                StoredOpts::Port.as_bytes(),
-                self.port.to_string().as_bytes(),
-            )
-        });
-    }
-
-    fn write_sample_rate(&self) {
-        DB.as_ref().map(|db| {
-            db.insert(
-                StoredOpts::SampleRate.as_bytes(),
-                self.sample_rate.to_string().as_bytes(),
-            )
-        });
+    fn default_ntsc() -> Fcm {
+        StoredOpts::Ntsc.try_into().unwrap_or(Fcm::NonDropFrame)
     }
 }
 
@@ -206,8 +159,8 @@ impl Default for Opt {
             dir: Opt::default_dir(),
             port: Opt::default_port(),
             sample_rate: Opt::default_sample_rate(),
-            fps: 23.976,
-            ntsc: edl::Fcm::NonDropFrame,
+            fps: Opt::default_frame_rate(),
+            ntsc: Opt::default_ntsc(),
             ltc_devices: LTCDevice::get_devices().ok(),
             buffer_size,
             input_channel,
@@ -216,22 +169,98 @@ impl Default for Opt {
     }
 }
 
+#[derive(Debug)]
+enum StoredOpts {
+    Dir,
+    Port,
+    SampleRate,
+    Fps,
+    Ntsc,
+    LTCDevice,
+    BufferSize,
+    InputChannel,
+}
+
+impl StoredOpts {
+    fn as_bytes(&self) -> &'static [u8] {
+        match self {
+            StoredOpts::Dir => b"d",
+            StoredOpts::Port => b"p",
+            StoredOpts::SampleRate => b"s",
+            StoredOpts::Fps => b"f",
+            StoredOpts::Ntsc => b"n",
+            StoredOpts::LTCDevice => b"l",
+            StoredOpts::BufferSize => b"b",
+            StoredOpts::InputChannel => b"i",
+        }
+    }
+}
+
+impl TryFrom<StoredOpts> for usize {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            str::from_utf8(&val.to_vec())?
+                .parse::<usize>()
+                .context("Could not parse to usize")
+        })
+    }
+}
+
+impl TryFrom<StoredOpts> for f32 {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            str::from_utf8(&val.to_vec())?
+                .parse::<f32>()
+                .context("Could not parse to f32")
+        })
+    }
+}
+
+impl TryFrom<StoredOpts> for String {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            String::from_utf8(val.to_vec()).context("Could not parse to utf8 String")
+        })
+    }
+}
+
+impl TryFrom<StoredOpts> for Fcm {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            Fcm::try_from(str::from_utf8(&val.to_vec()).context("Could not parse to utf8 str")?)
+        })
+    }
+}
+
 trait WriteChange {
-    fn write_on_change(&self, opt: &Opt, stored_opt: StoredOpts);
+    fn write_on_change(self, opt: &Opt, stored_opt: StoredOpts) -> Self;
 }
 
 impl WriteChange for egui::Response {
-    fn write_on_change(&self, opt: &Opt, stored_opt: StoredOpts) {
+    fn write_on_change(self, opt: &Opt, stored_opt: StoredOpts) -> Self {
         if self.changed() {
-            match stored_opt {
-                StoredOpts::Dir => opt.write_dir(),
-                StoredOpts::Port => opt.write_port(),
-                StoredOpts::SampleRate => opt.write_sample_rate(),
-                StoredOpts::Fps => todo!(),
-                StoredOpts::Ntsc => todo!(),
-                StoredOpts::LTCDevice => todo!(),
-                StoredOpts::InputChannel => todo!(),
-            };
+            DB.as_ref().map(|db| match stored_opt {
+                t @ StoredOpts::Dir => db.insert(
+                    t.as_bytes(),
+                    opt.dir
+                        .to_str()
+                        .ok_or_else(|| sled::Error::Unsupported("Invalid path".to_string()))?,
+                ),
+                t @ StoredOpts::SampleRate => {
+                    db.insert(t.as_bytes(), opt.sample_rate.to_string().as_bytes())
+                }
+                t @ StoredOpts::Port => db.insert(t.as_bytes(), opt.port.to_string().as_bytes()),
+                t @ StoredOpts::Fps => db.insert(t.as_bytes(), opt.fps.to_string().as_bytes()),
+                t @ StoredOpts::Ntsc => db.insert(t.as_bytes(), <&str>::from(opt.ntsc)),
+                _t @ StoredOpts::LTCDevice => todo!(),
+                _t @ StoredOpts::BufferSize => todo!(),
+                _t @ StoredOpts::InputChannel => todo!(),
+            });
         }
+        self
     }
 }

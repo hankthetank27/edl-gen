@@ -125,13 +125,14 @@ impl App {
     }
 
     fn config_storage_dir(&mut self, ui: &mut Ui) {
+        let mut label = ui.label(self.opt.dir.to_str().unwrap_or(""));
         if ui.button("Storage Directory").clicked() {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                 self.opt.dir = path;
-                self.opt.write_dir();
+                label.mark_changed();
             }
         }
-        ui.label(self.opt.dir.to_str().unwrap_or("Dir"));
+        label.write_on_change(&self.opt, StoredOpts::Dir);
     }
 
     fn config_input_device(&mut self, ui: &mut Ui) {
@@ -244,11 +245,16 @@ impl App {
         egui::ComboBox::from_label("Frame Rate")
             .selected_text(format!("{}", self.opt.fps))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.opt.fps, 23.976, "23.976");
-                ui.selectable_value(&mut self.opt.fps, 24.0, "24.0");
-                ui.selectable_value(&mut self.opt.fps, 25.0, "25.0");
-                ui.selectable_value(&mut self.opt.fps, 29.97, "29.97");
-                ui.selectable_value(&mut self.opt.fps, 30.0, "30.0");
+                ui.selectable_value(&mut self.opt.fps, 23.976, "23.976")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 24.0, "24.0")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 25.0, "25.0")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 29.97, "29.97")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 30.0, "30.0")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
             });
     }
 
@@ -260,12 +266,14 @@ impl App {
                     &mut self.opt.ntsc,
                     edl::Fcm::NonDropFrame,
                     String::from(edl::Fcm::NonDropFrame),
-                );
+                )
+                .write_on_change(&self.opt, StoredOpts::Ntsc);
                 ui.selectable_value(
                     &mut self.opt.ntsc,
                     edl::Fcm::DropFrame,
                     String::from(edl::Fcm::DropFrame),
-                );
+                )
+                .write_on_change(&self.opt, StoredOpts::Ntsc);
             });
     }
 
