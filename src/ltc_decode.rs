@@ -8,8 +8,10 @@ use std::sync::mpsc;
 use std::thread;
 use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
-use crate::single_val_channel::{self, ChannelErr};
-use crate::Opt;
+use crate::{
+    single_val_channel::{self, ChannelErr},
+    FindWithFallback, LTCFromDb, Opt,
+};
 
 // const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
 
@@ -29,7 +31,8 @@ impl LTCDevice {
         }
         host
     }
-    pub fn get_default() -> Result<Self, Error> {
+
+    pub fn try_get_default() -> Result<Self, Error> {
         LTCDevice::default_host()
             .default_input_device()
             .context("failed to find input device")?
@@ -41,50 +44,40 @@ impl LTCDevice {
             SupportedBufferSize::Unknown => return None,
             SupportedBufferSize::Range { min, max } => (min, max),
         };
-        let mut opts = vec![];
-        let mut n = 16;
-        while n <= *max && n <= 8192 {
-            if n >= *min {
-                opts.push(n)
-            }
-            n *= 2;
-        }
-        Some(opts)
+        Some(
+            (0..=13)
+                .map(|i| 16 << i)
+                .take_while(|&n| n <= *max && n <= 8192)
+                .filter(|&n| n >= *min)
+                .collect(),
+        )
     }
 
-    pub fn get_default_buffer_size(&self) -> Option<u32> {
-        self.get_buffer_opts()?.into_iter().reduce(|mut acc, buf| {
-            if acc != 1024 {
-                acc = buf
-            }
-            acc
-        })
+    pub fn get_default_buffer_size(&self, opt_buffers: Option<&Vec<u32>>) -> Option<u32> {
+        let buffers = match opt_buffers {
+            Some(b) => b,
+            None => &self.get_buffer_opts()?,
+        };
+        buffers.find_with_fallback(1024, || buffers.last().copied())
     }
 
-    pub fn get_devices() -> Result<Vec<LTCDevice>, Error> {
+    pub fn try_get_devices() -> Result<Vec<LTCDevice>, Error> {
         LTCDevice::default_host()
             .input_devices()?
             .map(LTCDevice::try_from)
             .collect()
     }
 
-    pub fn get_default_channel(&self) -> Option<usize> {
-        (self.config.channels() >= 1).then_some(1)
+    pub fn get_default_channel(&self, opt_channels: Option<usize>) -> Option<usize> {
+        let channels = match opt_channels {
+            Some(b) => b,
+            None => self.config.channels().into(),
+        };
+        (channels >= 1).then_some(1)
     }
 
-    pub fn get_default_configs() -> DefaultConfigs {
-        let ltc_device = LTCDevice::get_default().ok();
-        let input_channel = ltc_device
-            .as_ref()
-            .and_then(|device| device.get_default_channel());
-        let buffer_size = ltc_device
-            .as_ref()
-            .and_then(|device| device.get_default_buffer_size());
-        DefaultConfigs {
-            ltc_device,
-            input_channel,
-            buffer_size,
-        }
+    pub fn name(&self) -> Option<String> {
+        self.device.name().ok()
     }
 }
 
@@ -98,10 +91,51 @@ impl TryFrom<Device> for LTCDevice {
     }
 }
 
-pub struct DefaultConfigs {
+#[derive(Default)]
+pub struct LTCConfigs {
     pub ltc_device: Option<LTCDevice>,
+    pub ltc_devices: Option<Vec<LTCDevice>>,
     pub buffer_size: Option<u32>,
     pub input_channel: Option<usize>,
+}
+
+impl LTCConfigs {
+    pub fn from_db_defaults(defaults: LTCFromDb) -> Self {
+        LTCDevice::try_get_devices()
+            .map(|ltc_devices| {
+                let mut configs = defaults
+                    .find_device_from(&ltc_devices)
+                    .map(|ltc_device| LTCConfigs {
+                        ltc_devices: None,
+                        buffer_size: defaults.find_buffer_from(&ltc_device),
+                        input_channel: defaults.find_input_from(&ltc_device),
+                        ltc_device: Some(ltc_device),
+                    })
+                    .unwrap_or_else(LTCConfigs::default_no_device_list);
+                configs.ltc_devices = Some(ltc_devices);
+                configs
+            })
+            .unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                LTCConfigs::default()
+            })
+    }
+
+    pub fn default_no_device_list() -> Self {
+        let ltc_device = LTCDevice::try_get_default().ok();
+        let input_channel = ltc_device
+            .as_ref()
+            .and_then(|device| device.get_default_channel(None));
+        let buffer_size = ltc_device
+            .as_ref()
+            .and_then(|device| device.get_default_buffer_size(None));
+        LTCConfigs {
+            ltc_devices: None,
+            ltc_device,
+            input_channel,
+            buffer_size,
+        }
+    }
 }
 
 pub struct LTCListener {

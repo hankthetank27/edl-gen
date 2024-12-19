@@ -1,11 +1,12 @@
 use anyhow::{Context, Error};
 use eframe::egui;
 use log::{LevelFilter, SetLoggerError};
-use ltc_decode::{DefaultConfigs, LTCDevice};
+use ltc_decode::{LTCConfigs, LTCDevice};
 
 use crate::edl::Fcm;
 
 use std::fs;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::str;
 use std::sync::{LazyLock, Mutex};
@@ -20,7 +21,7 @@ pub mod update_version;
 
 type GlobalLog = Vec<(log::Level, String)>;
 
-pub static DB: LazyLock<Db> = LazyLock::new(|| Db::default());
+pub static DB: LazyLock<Db> = LazyLock::new(Db::default);
 pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
 pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
     LazyLock::new(|| Mutex::new(egui::Context::default()));
@@ -145,15 +146,24 @@ impl Opt {
     fn default_ntsc() -> Fcm {
         StoredOpts::Ntsc.try_into().unwrap_or(Fcm::NonDropFrame)
     }
+
+    fn default_ltc() -> LTCFromDb {
+        LTCFromDb {
+            device: StoredOpts::LTCDevice.try_into().ok(),
+            buffer_size: StoredOpts::BufferSize.try_into().ok(),
+            input_channel: StoredOpts::InputChannel.try_into().ok(),
+        }
+    }
 }
 
 impl Default for Opt {
     fn default() -> Self {
-        let DefaultConfigs {
+        let LTCConfigs {
             ltc_device,
+            ltc_devices,
             input_channel,
             buffer_size,
-        } = LTCDevice::get_default_configs();
+        } = LTCConfigs::from_db_defaults(Opt::default_ltc());
         Self {
             title: "my-video".into(),
             dir: Opt::default_dir(),
@@ -161,11 +171,42 @@ impl Default for Opt {
             sample_rate: Opt::default_sample_rate(),
             fps: Opt::default_frame_rate(),
             ntsc: Opt::default_ntsc(),
-            ltc_devices: LTCDevice::get_devices().ok(),
+            ltc_devices,
             buffer_size,
             input_channel,
             ltc_device,
         }
+    }
+}
+
+pub struct LTCFromDb {
+    device: Option<String>,
+    buffer_size: Option<u32>,
+    input_channel: Option<usize>,
+}
+
+impl LTCFromDb {
+    pub fn find_device_from(&self, devices: &[LTCDevice]) -> Option<LTCDevice> {
+        self.device.as_ref().and_then(|device_name| {
+            devices
+                .iter()
+                .find(|device| device.name().as_ref() == Some(device_name))
+                .cloned()
+        })
+    }
+
+    pub fn find_buffer_from(&self, device: &LTCDevice) -> Option<u32> {
+        let buffers = device.get_buffer_opts()?;
+        buffers.find_with_fallback(self.buffer_size?, || {
+            device.get_default_buffer_size(Some(&buffers))
+        })
+    }
+
+    pub fn find_input_from(&self, device: &LTCDevice) -> Option<usize> {
+        let channels = device.config.channels() as usize;
+        (1..=channels).find_with_fallback(self.input_channel?, || {
+            device.get_default_channel(Some(channels))
+        })
     }
 }
 
@@ -184,14 +225,14 @@ enum StoredOpts {
 impl StoredOpts {
     fn as_bytes(&self) -> &'static [u8] {
         match self {
-            StoredOpts::Dir => b"d",
-            StoredOpts::Port => b"p",
-            StoredOpts::SampleRate => b"s",
-            StoredOpts::Fps => b"f",
-            StoredOpts::Ntsc => b"n",
-            StoredOpts::LTCDevice => b"l",
-            StoredOpts::BufferSize => b"b",
-            StoredOpts::InputChannel => b"i",
+            StoredOpts::Dir => &[0],
+            StoredOpts::Port => &[1],
+            StoredOpts::SampleRate => &[2],
+            StoredOpts::Fps => &[3],
+            StoredOpts::Ntsc => &[4],
+            StoredOpts::LTCDevice => &[5],
+            StoredOpts::BufferSize => &[6],
+            StoredOpts::InputChannel => &[7],
         }
     }
 }
@@ -200,9 +241,20 @@ impl TryFrom<StoredOpts> for usize {
     type Error = Error;
     fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
         DB.get_from_stored_opts(stored_opts).and_then(|val| {
-            str::from_utf8(&val.to_vec())?
+            str::from_utf8(&val)?
                 .parse::<usize>()
                 .context("Could not parse to usize")
+        })
+    }
+}
+
+impl TryFrom<StoredOpts> for u32 {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            str::from_utf8(&val)?
+                .parse::<u32>()
+                .context("Could not parse to u32")
         })
     }
 }
@@ -211,7 +263,7 @@ impl TryFrom<StoredOpts> for f32 {
     type Error = Error;
     fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
         DB.get_from_stored_opts(stored_opts).and_then(|val| {
-            str::from_utf8(&val.to_vec())?
+            str::from_utf8(&val)?
                 .parse::<f32>()
                 .context("Could not parse to f32")
         })
@@ -231,7 +283,7 @@ impl TryFrom<StoredOpts> for Fcm {
     type Error = Error;
     fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
         DB.get_from_stored_opts(stored_opts).and_then(|val| {
-            Fcm::try_from(str::from_utf8(&val.to_vec()).context("Could not parse to utf8 str")?)
+            Fcm::try_from(str::from_utf8(&val).context("Could not parse to utf8 str")?)
         })
     }
 }
@@ -256,11 +308,65 @@ impl WriteChange for egui::Response {
                 t @ StoredOpts::Port => db.insert(t.as_bytes(), opt.port.to_string().as_bytes()),
                 t @ StoredOpts::Fps => db.insert(t.as_bytes(), opt.fps.to_string().as_bytes()),
                 t @ StoredOpts::Ntsc => db.insert(t.as_bytes(), <&str>::from(opt.ntsc)),
-                _t @ StoredOpts::LTCDevice => todo!(),
-                _t @ StoredOpts::BufferSize => todo!(),
-                _t @ StoredOpts::InputChannel => todo!(),
+
+                // we use unwrap_or_default to find values which should never match a valid config.
+                // this way they're always looked up according the device and set to default from
+                // there if they do not exist
+                t @ StoredOpts::LTCDevice => db.insert(
+                    t.as_bytes(),
+                    opt.ltc_device
+                        .as_ref()
+                        .and_then(|d| d.name())
+                        .unwrap_or_default()
+                        .as_bytes(),
+                ),
+                t @ StoredOpts::BufferSize => db.insert(
+                    t.as_bytes(),
+                    opt.buffer_size.unwrap_or_default().to_string().as_bytes(),
+                ),
+                t @ StoredOpts::InputChannel => db.insert(
+                    t.as_bytes(),
+                    opt.input_channel.unwrap_or_default().to_string().as_bytes(),
+                ),
             });
         }
         self
+    }
+}
+
+pub trait FindWithFallback {
+    fn find_with_fallback<F>(&self, target: Self::Item, fallback: F) -> Option<Self::Item>
+    where
+        F: FnOnce() -> Option<Self::Item>,
+        Self: Sized;
+    type Item;
+}
+
+impl<T> FindWithFallback for Vec<T>
+where
+    T: PartialEq + Copy,
+{
+    type Item = T;
+    fn find_with_fallback<F>(&self, target: Self::Item, fallback: F) -> Option<Self::Item>
+    where
+        F: FnOnce() -> Option<Self::Item>,
+    {
+        self.iter()
+            .find(|&&x| x == target)
+            .copied()
+            .or_else(fallback)
+    }
+}
+
+impl<T> FindWithFallback for RangeInclusive<T>
+where
+    T: PartialOrd + Copy,
+{
+    type Item = T;
+    fn find_with_fallback<F>(&self, target: Self::Item, fallback: F) -> Option<Self::Item>
+    where
+        F: FnOnce() -> Option<Self::Item>,
+    {
+        self.contains(&target).then_some(target).or_else(fallback)
     }
 }

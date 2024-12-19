@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Error};
-use cpal::traits::DeviceTrait;
 use eframe::egui::{self, mutex::Mutex, Ui};
 use ltc::LTCFrame;
 use std::io::{Read, Write};
@@ -10,9 +9,10 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
+use crate::ltc_decode::LTCConfigs;
 use crate::{
     edl,
-    ltc_decode::{DefaultConfigs, LTCDevice, LTCListener},
+    ltc_decode::{LTCDevice, LTCListener},
     server::Server,
     single_val_channel, update_version, Logger, Opt, StoredOpts, WriteChange,
 };
@@ -138,9 +138,8 @@ impl App {
     fn config_input_device(&mut self, ui: &mut Ui) {
         let get_name = |device: Option<&LTCDevice>| match device {
             Some(ltc_device) => ltc_device
-                .device
                 .name()
-                .unwrap_or_else(|_| "Device Has No Name".to_string()),
+                .unwrap_or_else(|| "Device Has No Name".to_string()),
             None => "No Device Found".to_string(),
         };
         let current_device_name = get_name(self.opt.ltc_device.as_ref());
@@ -152,8 +151,8 @@ impl App {
                     let checked = device_name == current_device_name;
                     if ui.selectable_label(checked, device_name).clicked() {
                         self.opt.ltc_device = Some(ltc_device.to_owned());
-                        self.opt.input_channel = ltc_device.get_default_channel();
-                        self.opt.buffer_size = ltc_device.get_default_buffer_size();
+                        self.opt.input_channel = ltc_device.get_default_channel(None);
+                        self.opt.buffer_size = ltc_device.get_default_buffer_size(None);
                     }
                 }),
                 None => {
@@ -164,13 +163,14 @@ impl App {
 
     fn refresh_input_device(&mut self, ui: &mut Ui) {
         if ui.add(egui::Button::new("Refresh Devices")).clicked() {
-            self.opt.ltc_devices = LTCDevice::get_devices().ok();
+            self.opt.ltc_devices = LTCDevice::try_get_devices().ok();
             if self.opt.ltc_device.is_none() {
-                let DefaultConfigs {
+                let LTCConfigs {
+                    ltc_devices: _,
                     ltc_device,
                     input_channel,
                     buffer_size,
-                } = LTCDevice::get_default_configs();
+                } = LTCConfigs::default_no_device_list();
                 self.opt.ltc_device = ltc_device;
                 self.opt.input_channel = input_channel;
                 self.opt.buffer_size = buffer_size;

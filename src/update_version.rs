@@ -1,7 +1,7 @@
 use anyhow::{Context, Error};
 use libloading::{Library, Symbol};
 use semver::Version;
-use std::process::Command;
+use std::process::{self, Command};
 
 pub fn update_available() -> Result<bool, Error> {
     let release = minreq::get("https://api.github.com/repos/hankthetank27/edl-gen/releases/latest")
@@ -39,11 +39,12 @@ pub fn mac_conveyor_sparkle_check_update() -> Result<(), Error> {
 }
 
 pub fn windows_update_and_quit() {
-    if let Ok(_) = Command::new("updatecheck.exe")
+    if Command::new("updatecheck.exe")
         .args(["--update-check"])
         .spawn()
+        .is_ok()
     {
-        std::process::exit(0);
+        process::exit(0);
     }
 }
 
