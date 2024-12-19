@@ -1,9 +1,9 @@
 use anyhow::{Context, Error};
+use edl::Ntsc;
 use eframe::egui;
 use log::{LevelFilter, SetLoggerError};
 use ltc_decode::{LTCConfigs, LTCDevice};
-
-use crate::edl::Fcm;
+use sled::IVec;
 
 use std::fs;
 use std::ops::RangeInclusive;
@@ -47,6 +47,12 @@ impl Db {
         } else {
             None
         }
+    }
+
+    fn insert_from_opts<V: Into<IVec>>(&self, key: &StoredOpts, value: V) -> Option<IVec> {
+        self.as_ref()
+            .and_then(|db| db.insert(key.as_bytes(), value).ok())
+            .flatten()
     }
 }
 
@@ -112,7 +118,7 @@ pub struct Opt {
     pub port: usize,
     pub sample_rate: usize,
     pub fps: f32,
-    pub ntsc: edl::Fcm,
+    pub ntsc: edl::Ntsc,
     pub buffer_size: Option<u32>,
     pub input_channel: Option<usize>,
     pub ltc_device: Option<LTCDevice>,
@@ -143,8 +149,8 @@ impl Opt {
         StoredOpts::Fps.try_into().unwrap_or(23.976)
     }
 
-    fn default_ntsc() -> Fcm {
-        StoredOpts::Ntsc.try_into().unwrap_or(Fcm::NonDropFrame)
+    fn default_ntsc() -> Ntsc {
+        StoredOpts::Ntsc.try_into().unwrap_or(Ntsc::NonDropFrame)
     }
 
     fn default_ltc() -> LTCFromDb {
@@ -210,6 +216,70 @@ impl LTCFromDb {
     }
 }
 
+//TODO: would be cool to write a blanket impl for anything bound by ToString, but seems tough atm
+//with conflicting impls. example below
+//
+// impl<T: ToString + fmt::Display> Writer for T {
+//     fn write(self, key: &StoredOpts) -> Option<IVec> {
+//         DB.insert_from_opts(key, self.to_string().as_bytes())
+//     }
+// }
+//
+trait Writer {
+    fn write(&self, key: &StoredOpts) -> Option<IVec>;
+}
+
+impl Writer for usize {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, self.to_string().as_bytes())
+    }
+}
+
+impl Writer for f32 {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, self.to_string().as_bytes())
+    }
+}
+
+impl Writer for PathBuf {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, self.to_str()?)
+    }
+}
+
+impl Writer for Ntsc {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, <&str>::from(*self))
+    }
+}
+
+// we use unwrap_or_default to find values which should never match a valid config.
+// this way they're always looked up according the device and set to default from
+// there if they do not exist
+impl Writer for Option<LTCDevice> {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(
+            key,
+            self.as_ref()
+                .and_then(|d| d.name())
+                .unwrap_or_default()
+                .as_bytes(),
+        )
+    }
+}
+
+impl Writer for Option<usize> {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, self.unwrap_or_default().to_string().as_bytes())
+    }
+}
+
+impl Writer for Option<u32> {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, self.unwrap_or_default().to_string().as_bytes())
+    }
+}
+
 #[derive(Debug)]
 enum StoredOpts {
     Dir,
@@ -233,6 +303,19 @@ impl StoredOpts {
             StoredOpts::LTCDevice => &[5],
             StoredOpts::BufferSize => &[6],
             StoredOpts::InputChannel => &[7],
+        }
+    }
+
+    fn write(&self, opt: &Opt) -> Option<IVec> {
+        match self {
+            t @ StoredOpts::Dir => opt.dir.write(t),
+            t @ StoredOpts::SampleRate => opt.sample_rate.write(t),
+            t @ StoredOpts::Port => opt.port.write(t),
+            t @ StoredOpts::Fps => opt.fps.write(t),
+            t @ StoredOpts::Ntsc => opt.ntsc.write(t),
+            t @ StoredOpts::LTCDevice => opt.ltc_device.write(t),
+            t @ StoredOpts::BufferSize => opt.buffer_size.write(t),
+            t @ StoredOpts::InputChannel => opt.input_channel.write(t),
         }
     }
 }
@@ -279,58 +362,12 @@ impl TryFrom<StoredOpts> for String {
     }
 }
 
-impl TryFrom<StoredOpts> for Fcm {
+impl TryFrom<StoredOpts> for Ntsc {
     type Error = Error;
     fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
         DB.get_from_stored_opts(stored_opts).and_then(|val| {
-            Fcm::try_from(str::from_utf8(&val).context("Could not parse to utf8 str")?)
+            Ntsc::try_from(str::from_utf8(&val).context("Could not parse to utf8 str")?)
         })
-    }
-}
-
-trait WriteChange {
-    fn write_on_change(self, opt: &Opt, stored_opt: StoredOpts) -> Self;
-}
-
-impl WriteChange for egui::Response {
-    fn write_on_change(self, opt: &Opt, stored_opt: StoredOpts) -> Self {
-        if self.changed() {
-            DB.as_ref().map(|db| match stored_opt {
-                t @ StoredOpts::Dir => db.insert(
-                    t.as_bytes(),
-                    opt.dir
-                        .to_str()
-                        .ok_or_else(|| sled::Error::Unsupported("Invalid path".to_string()))?,
-                ),
-                t @ StoredOpts::SampleRate => {
-                    db.insert(t.as_bytes(), opt.sample_rate.to_string().as_bytes())
-                }
-                t @ StoredOpts::Port => db.insert(t.as_bytes(), opt.port.to_string().as_bytes()),
-                t @ StoredOpts::Fps => db.insert(t.as_bytes(), opt.fps.to_string().as_bytes()),
-                t @ StoredOpts::Ntsc => db.insert(t.as_bytes(), <&str>::from(opt.ntsc)),
-
-                // we use unwrap_or_default to find values which should never match a valid config.
-                // this way they're always looked up according the device and set to default from
-                // there if they do not exist
-                t @ StoredOpts::LTCDevice => db.insert(
-                    t.as_bytes(),
-                    opt.ltc_device
-                        .as_ref()
-                        .and_then(|d| d.name())
-                        .unwrap_or_default()
-                        .as_bytes(),
-                ),
-                t @ StoredOpts::BufferSize => db.insert(
-                    t.as_bytes(),
-                    opt.buffer_size.unwrap_or_default().to_string().as_bytes(),
-                ),
-                t @ StoredOpts::InputChannel => db.insert(
-                    t.as_bytes(),
-                    opt.input_channel.unwrap_or_default().to_string().as_bytes(),
-                ),
-            });
-        }
-        self
     }
 }
 

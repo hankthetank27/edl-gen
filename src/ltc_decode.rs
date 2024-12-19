@@ -12,6 +12,7 @@ use crate::{
     single_val_channel::{self, ChannelErr},
     FindWithFallback, LTCFromDb, Opt,
 };
+use crate::{StoredOpts, Writer};
 
 // const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
 
@@ -111,7 +112,13 @@ impl LTCConfigs {
                         input_channel: defaults.find_input_from(&ltc_device),
                         ltc_device: Some(ltc_device),
                     })
-                    .unwrap_or_else(LTCConfigs::default_no_device_list);
+                    .unwrap_or_else(|| {
+                        let defaults = LTCConfigs::default_no_device_list();
+                        defaults.ltc_device.write(&StoredOpts::LTCDevice);
+                        defaults.buffer_size.write(&StoredOpts::BufferSize);
+                        defaults.input_channel.write(&StoredOpts::InputChannel);
+                        defaults
+                    });
                 configs.ltc_devices = Some(ltc_devices);
                 configs
             })
