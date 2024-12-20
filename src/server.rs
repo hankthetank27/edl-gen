@@ -197,7 +197,7 @@ impl<'req> Request<'req> {
                 ctx.rec_state = EdlRecordingState::Stopped;
                 let mut response = self.body()?.try_log_edit(ctx)?;
                 ctx.decode_handlers.decode_off()?;
-                log::info!("Ended recording!\n");
+                log::info!("Ended recording!");
                 response.content = format!("Stopped decoding with {}", response.content);
                 Ok(response)
             }

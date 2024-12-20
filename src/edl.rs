@@ -64,26 +64,42 @@ impl Edl {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Fcm {
+pub enum Ntsc {
     DropFrame,
     NonDropFrame,
 }
 
-impl From<Fcm> for String {
-    fn from(value: Fcm) -> Self {
+impl From<Ntsc> for &str {
+    fn from(value: Ntsc) -> Self {
         match value {
-            Fcm::DropFrame => "DROP FRAME",
-            Fcm::NonDropFrame => "NON-DROP FRAME",
+            Ntsc::DropFrame => "Drop Frame",
+            Ntsc::NonDropFrame => "Non-Drop Frame",
         }
-        .into()
     }
 }
 
-impl Fcm {
+impl From<Ntsc> for String {
+    fn from(value: Ntsc) -> Self {
+        <&str>::from(value).into()
+    }
+}
+
+impl TryFrom<&str> for Ntsc {
+    type Error = Error;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            x if x == <&str>::from(Ntsc::NonDropFrame) => Ok(Ntsc::NonDropFrame),
+            x if x == <&str>::from(Ntsc::DropFrame) => Ok(Ntsc::DropFrame),
+            _ => Err(anyhow!("Invalid conversion")),
+        }
+    }
+}
+
+impl Ntsc {
     pub fn as_vtc(&self) -> vtc::Ntsc {
         match self {
-            Fcm::DropFrame => vtc::Ntsc::DropFrame,
-            Fcm::NonDropFrame => vtc::Ntsc::NonDropFrame,
+            Ntsc::DropFrame => vtc::Ntsc::DropFrame,
+            Ntsc::NonDropFrame => vtc::Ntsc::NonDropFrame,
         }
     }
 }

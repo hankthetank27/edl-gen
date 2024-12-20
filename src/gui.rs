@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Error};
-use cpal::traits::DeviceTrait;
 use eframe::egui::{self, mutex::Mutex, Ui};
 use ltc::LTCFrame;
 use std::io::{Read, Write};
@@ -10,12 +9,13 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use crate::ltc_decode::{DefaultConfigs, LTCDevice, LTCListener};
-use crate::server::Server;
-use crate::single_val_channel;
-use crate::update_version;
-use crate::Logger;
-use crate::{edl, Opt};
+use crate::ltc_decode::LTCConfig;
+use crate::{
+    edl,
+    ltc_decode::{LTCDevice, LTCListener},
+    server::Server,
+    single_val_channel, update_version, Logger, Opt, StoredOpts,
+};
 
 pub struct App {
     rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
@@ -125,35 +125,45 @@ impl App {
     }
 
     fn config_storage_dir(&mut self, ui: &mut Ui) {
+        let mut label = ui.label(self.opt.dir.to_str().unwrap_or(""));
         if ui.button("Storage Directory").clicked() {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                 self.opt.dir = path;
+                label.mark_changed();
             }
         }
-        ui.label(self.opt.dir.to_str().unwrap_or("Dir"));
+        label.write_on_change(&self.opt, StoredOpts::Dir);
     }
 
     fn config_input_device(&mut self, ui: &mut Ui) {
-        let get_name = |device: Option<&LTCDevice>| match device {
-            Some(ltc_device) => ltc_device
-                .device
-                .name()
-                .unwrap_or_else(|_| "Device Has No Name".to_string()),
-            None => "No Device Found".to_string(),
+        let get_name = |device: Option<&LTCDevice>| {
+            device.map_or("No Device Found".to_string(), |d| {
+                d.name().unwrap_or_else(|| "Device Has No Name".to_string())
+            })
         };
         let current_device_name = get_name(self.opt.ltc_device.as_ref());
         egui::ComboBox::from_label("Audio Device")
             .selected_text(current_device_name.to_string())
             .show_ui(ui, |ui| match &self.opt.ltc_devices {
-                Some(devices) => devices.iter().for_each(|ltc_device| {
-                    let device_name = get_name(Some(ltc_device));
-                    let checked = device_name == current_device_name;
-                    if ui.selectable_label(checked, device_name).clicked() {
-                        self.opt.ltc_device = Some(ltc_device.to_owned());
-                        self.opt.input_channel = ltc_device.get_default_channel();
-                        self.opt.buffer_size = ltc_device.get_default_buffer_size();
+                Some(devices) => {
+                    for new_device in devices.iter() {
+                        let device_name = get_name(Some(new_device));
+                        let checked = device_name == current_device_name;
+                        let mut label = ui.selectable_label(checked, device_name);
+                        if label.clicked() {
+                            self.opt.input_channel =
+                                new_device.match_input_or_default(self.opt.input_channel);
+                            self.opt.buffer_size =
+                                new_device.match_buffer_or_default(self.opt.buffer_size);
+                            self.opt.ltc_device = Some(new_device.to_owned());
+                            label.mark_changed();
+                        }
+                        label
+                            .write_on_change(&self.opt, StoredOpts::LTCDevice)
+                            .write_on_change(&self.opt, StoredOpts::BufferSize)
+                            .write_on_change(&self.opt, StoredOpts::InputChannel);
                     }
-                }),
+                }
                 None => {
                     ui.label("No Audio Device Found");
                 }
@@ -161,19 +171,26 @@ impl App {
     }
 
     fn refresh_input_device(&mut self, ui: &mut Ui) {
-        if ui.add(egui::Button::new("Refresh Devices")).clicked() {
-            self.opt.ltc_devices = LTCDevice::get_devices().ok();
+        let mut button = ui.button("Refresh Devices");
+        if button.clicked() {
+            self.opt.ltc_devices = LTCDevice::try_get_devices().ok();
             if self.opt.ltc_device.is_none() {
-                let DefaultConfigs {
+                let LTCConfig {
+                    ltc_devices: _,
                     ltc_device,
                     input_channel,
                     buffer_size,
-                } = LTCDevice::get_default_configs();
+                } = LTCConfig::default_no_device_list();
                 self.opt.ltc_device = ltc_device;
                 self.opt.input_channel = input_channel;
                 self.opt.buffer_size = buffer_size;
+                button.mark_changed();
             }
         }
+        button
+            .write_on_change(&self.opt, StoredOpts::LTCDevice)
+            .write_on_change(&self.opt, StoredOpts::BufferSize)
+            .write_on_change(&self.opt, StoredOpts::InputChannel);
     }
 
     fn config_input_channel(&mut self, ui: &mut Ui) {
@@ -190,9 +207,12 @@ impl App {
                     (1..&ltc_device.config.channels() + 1).for_each(|channel| {
                         let channel = channel as usize;
                         let checked = Some(channel) == self.opt.input_channel;
-                        if ui.selectable_label(checked, channel.to_string()).clicked() {
+                        let mut label = ui.selectable_label(checked, channel.to_string());
+                        if label.clicked() {
                             self.opt.input_channel = Some(channel);
+                            label.mark_changed();
                         }
+                        label.write_on_change(&self.opt, StoredOpts::InputChannel);
                     });
                 }
                 None => {
@@ -214,9 +234,12 @@ impl App {
                 Some(device) => match device.get_buffer_opts() {
                     Some(opts) => opts.into_iter().for_each(|buffer| {
                         let checked = Some(buffer) == self.opt.buffer_size;
-                        if ui.selectable_label(checked, buffer.to_string()).clicked() {
+                        let mut label = ui.selectable_label(checked, buffer.to_string());
+                        if label.clicked() {
                             self.opt.buffer_size = Some(buffer);
+                            label.mark_changed();
                         }
+                        label.write_on_change(&self.opt, StoredOpts::BufferSize);
                     }),
                     None => {
                         self.opt.buffer_size = None;
@@ -232,8 +255,10 @@ impl App {
         egui::ComboBox::from_label("LTC Input Sample Rate")
             .selected_text(format!("{:?}hz", self.opt.sample_rate))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.opt.sample_rate, 44100, "44100hz");
-                ui.selectable_value(&mut self.opt.sample_rate, 48000, "48000hz");
+                ui.selectable_value(&mut self.opt.sample_rate, 44_100, "44100hz")
+                    .write_on_change(&self.opt, StoredOpts::SampleRate);
+                ui.selectable_value(&mut self.opt.sample_rate, 48_000, "48000hz")
+                    .write_on_change(&self.opt, StoredOpts::SampleRate);
             });
     }
 
@@ -241,11 +266,16 @@ impl App {
         egui::ComboBox::from_label("Frame Rate")
             .selected_text(format!("{}", self.opt.fps))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.opt.fps, 23.976, "23.976");
-                ui.selectable_value(&mut self.opt.fps, 24.0, "24.0");
-                ui.selectable_value(&mut self.opt.fps, 25.0, "25.0");
-                ui.selectable_value(&mut self.opt.fps, 29.97, "29.97");
-                ui.selectable_value(&mut self.opt.fps, 30.0, "30.0");
+                ui.selectable_value(&mut self.opt.fps, 23.976, "23.976")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 24.0, "24.0")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 25.0, "25.0")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 29.97, "29.97")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
+                ui.selectable_value(&mut self.opt.fps, 30.0, "30.0")
+                    .write_on_change(&self.opt, StoredOpts::Fps);
             });
     }
 
@@ -255,19 +285,22 @@ impl App {
             .show_ui(ui, |ui| {
                 ui.selectable_value(
                     &mut self.opt.ntsc,
-                    edl::Fcm::NonDropFrame,
-                    String::from(edl::Fcm::NonDropFrame),
-                );
+                    edl::Ntsc::NonDropFrame,
+                    String::from(edl::Ntsc::NonDropFrame),
+                )
+                .write_on_change(&self.opt, StoredOpts::Ntsc);
                 ui.selectable_value(
                     &mut self.opt.ntsc,
-                    edl::Fcm::DropFrame,
-                    String::from(edl::Fcm::DropFrame),
-                );
+                    edl::Ntsc::DropFrame,
+                    String::from(edl::Ntsc::DropFrame),
+                )
+                .write_on_change(&self.opt, StoredOpts::Ntsc);
             });
     }
 
     fn config_tcp_port(&mut self, ui: &mut Ui) {
-        ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9999).text("TCP Port"));
+        ui.add(egui::Slider::new(&mut self.opt.port, 3000..=9999).text("TCP Port"))
+            .write_on_change(&self.opt, StoredOpts::Port);
     }
 
     fn logger(&mut self, ui: &mut Ui) {
@@ -356,5 +389,18 @@ impl eframe::App for App {
             ui.add_space(space);
             self.logger(ui)
         });
+    }
+}
+
+trait WriteChange {
+    fn write_on_change(self, opt: &Opt, stored_opt: StoredOpts) -> Self;
+}
+
+impl WriteChange for egui::Response {
+    fn write_on_change(self, opt: &Opt, stored_opt: StoredOpts) -> Self {
+        if self.changed() {
+            stored_opt.write(opt);
+        }
+        self
     }
 }
