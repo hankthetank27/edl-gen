@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc};
 use crate::edl::{AVChannels, Edit, Edl, FrameDataPair};
 use crate::frame_queue::FrameQueue;
 use crate::ltc_decode::{DecodeErr, DecodeHandlers};
-use crate::Opt;
+use crate::state::Opt;
 
 pub struct Server {
     host: String,

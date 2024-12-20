@@ -2,7 +2,10 @@
 use anyhow::{anyhow, Error};
 use eframe::egui;
 
-use edl_gen::{gui::App, Logger, EGUI_CTX};
+use edl_gen::{
+    gui::App,
+    state::{Logger, EGUI_CTX},
+};
 
 fn main() -> Result<(), Error> {
     let start = std::time::Instant::now();

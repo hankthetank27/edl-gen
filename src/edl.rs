@@ -12,8 +12,10 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use vtc::Timecode;
 
-use crate::frame_queue::{EditType, FrameData};
-use crate::Opt;
+use crate::{
+    frame_queue::{EditType, FrameData},
+    state::Opt,
+};
 
 #[derive(Debug)]
 pub struct Edl {

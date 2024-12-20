@@ -10,9 +10,8 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
 use crate::{
     single_val_channel::{self, ChannelErr},
-    FindWithFallback, LTCSerializedConfg, Opt,
+    state::{FindWithFallback, LTCSerializedConfg, Opt, StoredOpts, Writer},
 };
-use crate::{StoredOpts, Writer};
 
 // const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
 

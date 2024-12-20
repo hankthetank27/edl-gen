@@ -14,7 +14,9 @@ use crate::{
     edl,
     ltc_decode::{LTCDevice, LTCListener},
     server::Server,
-    single_val_channel, update_version, Logger, Opt, StoredOpts,
+    single_val_channel,
+    state::{Logger, Opt, StoredOpts},
+    update_version,
 };
 
 pub struct App {
