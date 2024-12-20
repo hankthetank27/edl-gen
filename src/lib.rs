@@ -2,7 +2,7 @@ use anyhow::{Context, Error};
 use edl::Ntsc;
 use eframe::egui;
 use log::{LevelFilter, SetLoggerError};
-use ltc_decode::{LTCConfigs, LTCDevice};
+use ltc_decode::{LTCConfig, LTCDevice};
 use sled::IVec;
 
 use std::fs;
@@ -153,8 +153,8 @@ impl Opt {
         StoredOpts::Ntsc.try_into().unwrap_or(Ntsc::NonDropFrame)
     }
 
-    fn default_ltc() -> LTCFromDb {
-        LTCFromDb {
+    fn default_ltc() -> LTCSerializedConfg {
+        LTCSerializedConfg {
             device: StoredOpts::LTCDevice.try_into().ok(),
             buffer_size: StoredOpts::BufferSize.try_into().ok(),
             input_channel: StoredOpts::InputChannel.try_into().ok(),
@@ -164,12 +164,12 @@ impl Opt {
 
 impl Default for Opt {
     fn default() -> Self {
-        let LTCConfigs {
+        let LTCConfig {
             ltc_device,
             ltc_devices,
             input_channel,
             buffer_size,
-        } = LTCConfigs::from_db_defaults(Opt::default_ltc());
+        } = LTCConfig::from_serialized(Opt::default_ltc());
         Self {
             title: "my-video".into(),
             dir: Opt::default_dir(),
@@ -185,13 +185,13 @@ impl Default for Opt {
     }
 }
 
-pub struct LTCFromDb {
+pub struct LTCSerializedConfg {
     device: Option<String>,
     buffer_size: Option<u32>,
     input_channel: Option<usize>,
 }
 
-impl LTCFromDb {
+impl LTCSerializedConfg {
     pub fn find_device_from(&self, devices: &[LTCDevice]) -> Option<LTCDevice> {
         self.device.as_ref().and_then(|device_name| {
             devices
@@ -216,15 +216,6 @@ impl LTCFromDb {
     }
 }
 
-//TODO: would be cool to write a blanket impl for anything bound by ToString, but seems tough atm
-//with conflicting impls. example below
-//
-// impl<T: ToString + fmt::Display> Writer for T {
-//     fn write(self, key: &StoredOpts) -> Option<IVec> {
-//         DB.insert_from_opts(key, self.to_string().as_bytes())
-//     }
-// }
-//
 trait Writer {
     fn write(&self, key: &StoredOpts) -> Option<IVec>;
 }

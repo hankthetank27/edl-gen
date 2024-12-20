@@ -10,7 +10,7 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
 use crate::{
     single_val_channel::{self, ChannelErr},
-    FindWithFallback, LTCFromDb, Opt,
+    FindWithFallback, LTCSerializedConfg, Opt,
 };
 use crate::{StoredOpts, Writer};
 
@@ -62,6 +62,14 @@ impl LTCDevice {
         buffers.find_with_fallback(1024, || buffers.last().copied())
     }
 
+    pub fn get_default_channel(&self, opt_channels: Option<usize>) -> Option<usize> {
+        let channels = match opt_channels {
+            Some(b) => b,
+            None => self.config.channels().into(),
+        };
+        (channels >= 1).then_some(1)
+    }
+
     pub fn try_get_devices() -> Result<Vec<LTCDevice>, Error> {
         LTCDevice::default_host()
             .input_devices()?
@@ -69,12 +77,14 @@ impl LTCDevice {
             .collect()
     }
 
-    pub fn get_default_channel(&self, opt_channels: Option<usize>) -> Option<usize> {
-        let channels = match opt_channels {
-            Some(b) => b,
-            None => self.config.channels().into(),
-        };
-        (channels >= 1).then_some(1)
+    pub fn match_buffer_or_default(&self, target: Option<u32>) -> Option<u32> {
+        let buffers = self.get_buffer_opts()?;
+        buffers.find_with_fallback(target?, || self.get_default_buffer_size(Some(&buffers)))
+    }
+
+    pub fn match_input_or_default(&self, target: Option<usize>) -> Option<usize> {
+        let channels = self.config.channels() as usize;
+        (1..=channels).find_with_fallback(target?, || self.get_default_channel(Some(channels)))
     }
 
     pub fn name(&self) -> Option<String> {
@@ -93,27 +103,27 @@ impl TryFrom<Device> for LTCDevice {
 }
 
 #[derive(Default)]
-pub struct LTCConfigs {
+pub struct LTCConfig {
     pub ltc_device: Option<LTCDevice>,
     pub ltc_devices: Option<Vec<LTCDevice>>,
     pub buffer_size: Option<u32>,
     pub input_channel: Option<usize>,
 }
 
-impl LTCConfigs {
-    pub fn from_db_defaults(defaults: LTCFromDb) -> Self {
+impl LTCConfig {
+    pub fn from_serialized(defaults: LTCSerializedConfg) -> Self {
         LTCDevice::try_get_devices()
             .map(|ltc_devices| {
                 let mut configs = defaults
                     .find_device_from(&ltc_devices)
-                    .map(|ltc_device| LTCConfigs {
+                    .map(|ltc_device| LTCConfig {
                         ltc_devices: None,
                         buffer_size: defaults.find_buffer_from(&ltc_device),
                         input_channel: defaults.find_input_from(&ltc_device),
                         ltc_device: Some(ltc_device),
                     })
                     .unwrap_or_else(|| {
-                        let defaults = LTCConfigs::default_no_device_list();
+                        let defaults = LTCConfig::default_no_device_list();
                         defaults.ltc_device.write(&StoredOpts::LTCDevice);
                         defaults.buffer_size.write(&StoredOpts::BufferSize);
                         defaults.input_channel.write(&StoredOpts::InputChannel);
@@ -124,7 +134,7 @@ impl LTCConfigs {
             })
             .unwrap_or_else(|e| {
                 eprintln!("{}", e);
-                LTCConfigs::default()
+                LTCConfig::default()
             })
     }
 
@@ -136,7 +146,7 @@ impl LTCConfigs {
         let buffer_size = ltc_device
             .as_ref()
             .and_then(|device| device.get_default_buffer_size(None));
-        LTCConfigs {
+        LTCConfig {
             ltc_devices: None,
             ltc_device,
             input_channel,

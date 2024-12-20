@@ -9,7 +9,7 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use crate::ltc_decode::LTCConfigs;
+use crate::ltc_decode::LTCConfig;
 use crate::{
     edl,
     ltc_decode::{LTCDevice, LTCListener},
@@ -135,8 +135,6 @@ impl App {
         label.write_on_change(&self.opt, StoredOpts::Dir);
     }
 
-    //TODO: we should be trying to match the buffer size and input channels when we change devices
-    // if they're available, only reverting to default if they're not
     fn config_input_device(&mut self, ui: &mut Ui) {
         let get_name = |device: Option<&LTCDevice>| {
             device.map_or("No Device Found".to_string(), |d| {
@@ -148,14 +146,16 @@ impl App {
             .selected_text(current_device_name.to_string())
             .show_ui(ui, |ui| match &self.opt.ltc_devices {
                 Some(devices) => {
-                    for ltc_device in devices.iter() {
-                        let device_name = get_name(Some(ltc_device));
+                    for new_device in devices.iter() {
+                        let device_name = get_name(Some(new_device));
                         let checked = device_name == current_device_name;
                         let mut label = ui.selectable_label(checked, device_name);
                         if label.clicked() {
-                            self.opt.ltc_device = Some(ltc_device.to_owned());
-                            self.opt.input_channel = ltc_device.get_default_channel(None);
-                            self.opt.buffer_size = ltc_device.get_default_buffer_size(None);
+                            self.opt.input_channel =
+                                new_device.match_input_or_default(self.opt.input_channel);
+                            self.opt.buffer_size =
+                                new_device.match_buffer_or_default(self.opt.buffer_size);
+                            self.opt.ltc_device = Some(new_device.to_owned());
                             label.mark_changed();
                         }
                         label
@@ -175,12 +175,12 @@ impl App {
         if button.clicked() {
             self.opt.ltc_devices = LTCDevice::try_get_devices().ok();
             if self.opt.ltc_device.is_none() {
-                let LTCConfigs {
+                let LTCConfig {
                     ltc_devices: _,
                     ltc_device,
                     input_channel,
                     buffer_size,
-                } = LTCConfigs::default_no_device_list();
+                } = LTCConfig::default_no_device_list();
                 self.opt.ltc_device = ltc_device;
                 self.opt.input_channel = input_channel;
                 self.opt.buffer_size = buffer_size;
