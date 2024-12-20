@@ -1,6 +1,6 @@
 use anyhow::{Context, Error};
 use eframe::egui;
-use log::{LevelFilter, SetLoggerError};
+use log::LevelFilter;
 use sled::IVec;
 use std::fs;
 use std::ops::RangeInclusive;
@@ -11,14 +11,14 @@ use std::sync::{LazyLock, Mutex};
 use crate::edl::Ntsc;
 use crate::ltc_decode::{LTCConfig, LTCDevice};
 
-type GlobalLog = Vec<(log::Level, String)>;
-
-pub static DB: LazyLock<Db> = LazyLock::new(Db::default);
-pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
-pub static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
+static DB: LazyLock<Db> = LazyLock::new(Db::default);
+static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
+// we assign EGUI_CTX as a global on gui init to have access to context
+// for triggering repaints on logging
+static EGUI_CTX: LazyLock<Mutex<egui::Context>> =
     LazyLock::new(|| Mutex::new(egui::Context::default()));
 
-pub struct Db(Option<sled::Db>);
+struct Db(Option<sled::Db>);
 
 impl Db {
     fn as_ref(&self) -> Option<&sled::Db> {
@@ -52,55 +52,6 @@ impl Default for Db {
     fn default() -> Self {
         Db(Db::get_or_make_prefs_dir().and_then(|dir| sled::open(dir).ok()))
     }
-}
-
-pub struct Logger;
-
-impl Logger {
-    pub fn init() -> Result<(), SetLoggerError> {
-        log::set_logger(&Logger).map(|()| log::set_max_level(LevelFilter::Info))
-    }
-
-    fn try_mut_log<F, T>(f: F) -> Option<T>
-    where
-        F: FnOnce(&mut GlobalLog) -> T,
-    {
-        match LOG.lock() {
-            Ok(ref mut global_log) => Some((f)(global_log)),
-            Err(_) => None,
-        }
-    }
-
-    pub fn try_get_log<F, T>(f: F) -> Option<T>
-    where
-        F: FnOnce(&GlobalLog) -> T,
-    {
-        match LOG.lock() {
-            Ok(ref global_log) => Some((f)(global_log)),
-            Err(_) => None,
-        }
-    }
-}
-
-impl log::Log for Logger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::STATIC_MAX_LEVEL
-    }
-
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            match record.level() {
-                log::Level::Error => eprintln!("{}", record.args()),
-                _ => println!("{}", record.args()),
-            };
-            Logger::try_mut_log(|logs| logs.push((record.level(), record.args().to_string())));
-            if let Ok(ctx) = EGUI_CTX.lock() {
-                ctx.request_repaint();
-            }
-        }
-    }
-
-    fn flush(&self) {}
 }
 
 #[derive(Clone)]
@@ -389,4 +340,60 @@ where
     {
         self.contains(&target).then_some(target).or_else(fallback)
     }
+}
+
+type GlobalLog = Vec<(log::Level, String)>;
+
+pub struct Logger;
+
+impl Logger {
+    pub fn init(ctx: egui::Context) {
+        log::set_logger(&Logger)
+            .ok()
+            .map(|_| log::set_max_level(LevelFilter::Info))
+            // This can only ever be called once as log::set_logger returns an Error
+            // after the first call
+            .and_then(|_| EGUI_CTX.lock().map(|mut dummy_ctx| *dummy_ctx = ctx).ok());
+    }
+
+    fn try_mut_log<F, T>(f: F) -> Option<T>
+    where
+        F: FnOnce(&mut GlobalLog) -> T,
+    {
+        match LOG.lock() {
+            Ok(ref mut global_log) => Some((f)(global_log)),
+            Err(_) => None,
+        }
+    }
+
+    pub fn try_get_log<F, T>(f: F) -> Option<T>
+    where
+        F: FnOnce(&GlobalLog) -> T,
+    {
+        match LOG.lock() {
+            Ok(ref global_log) => Some((f)(global_log)),
+            Err(_) => None,
+        }
+    }
+}
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::STATIC_MAX_LEVEL
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            match record.level() {
+                log::Level::Error => eprintln!("{}", record.args()),
+                _ => println!("{}", record.args()),
+            };
+            Logger::try_mut_log(|logs| logs.push((record.level(), record.args().to_string())));
+            if let Ok(ctx) = EGUI_CTX.lock() {
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    fn flush(&self) {}
 }
