@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use anyhow::{anyhow, Error};
 use eframe::egui;
 
@@ -16,7 +17,7 @@ fn main() -> Result<(), Error> {
         "EDLgen",
         options,
         Box::new(move |cc| {
-            Logger::init(cc.egui_ctx.clone());
+            Logger::init(&cc.egui_ctx);
             log::info!("Welcome to EDLgen v{}!", env!("CARGO_PKG_VERSION"));
             let app = Box::new(App::default());
             println!("startup took {:?}", start.elapsed());

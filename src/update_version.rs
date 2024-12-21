@@ -1,4 +1,4 @@
-use anyhow::{Context, Error};
+use anyhow::{anyhow, Context, Error};
 use libloading::{Library, Symbol};
 use semver::Version;
 use std::process::{self, Command};
@@ -29,10 +29,10 @@ fn bump_is_greater(current: &str, latest: &str) -> Result<bool, Error> {
 pub fn mac_conveyor_sparkle_check_update() -> Result<(), Error> {
     unsafe {
         let lib = Library::new("../Frameworks/libconveyor.dylib")
-            .context("Failed to load Conveyor library")?;
+            .map_err(|e| anyhow!("Failed to load Conveyor library: {}", e))?;
         let update: Symbol<unsafe extern "C" fn() -> i32> = lib
             .get(b"conveyor_check_for_updates")
-            .context("Failed to find updater symbol")?;
+            .map_err(|e| anyhow!("Failed to find updater symbol: {}", e))?;
         update();
     }
     Ok(())

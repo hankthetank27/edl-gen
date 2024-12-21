@@ -25,16 +25,24 @@ impl Db {
         self.0.as_ref()
     }
 
-    fn get_from_stored_opts(&self, stored_opts: StoredOpts) -> Result<sled::IVec, Error> {
+    fn get_from_stored_opts(&self, stored_opts: StoredOpts) -> Result<IVec, Error> {
         self.as_ref()
-            .and_then(|db| db.get(stored_opts.as_bytes()).ok())
+            .and_then(|db| {
+                db.get(stored_opts.as_bytes())
+                    .inspect_err(|e| eprintln!("Cloud not get from Db: {}", e))
+                    .ok()
+            })
             .flatten()
             .context("Could not get value from db")
     }
 
     fn get_or_make_prefs_dir() -> Option<PathBuf> {
         let edl_prefs = dirs::preference_dir()?.join("edl-gen/");
-        if edl_prefs.exists() || fs::create_dir_all(&edl_prefs).is_ok() {
+        if edl_prefs.exists()
+            || fs::create_dir_all(&edl_prefs)
+                .inspect_err(|e| eprintln!("Cloud not create directory: {}", e))
+                .is_ok()
+        {
             Some(edl_prefs)
         } else {
             None
@@ -43,14 +51,22 @@ impl Db {
 
     fn insert_from_opts<V: Into<IVec>>(&self, key: &StoredOpts, value: V) -> Option<IVec> {
         self.as_ref()
-            .and_then(|db| db.insert(key.as_bytes(), value).ok())
+            .and_then(|db| {
+                db.insert(key.as_bytes(), value)
+                    .inspect_err(|e| eprintln!("Cloud not insert into Db: {}", e))
+                    .ok()
+            })
             .flatten()
     }
 }
 
 impl Default for Db {
     fn default() -> Self {
-        Db(Db::get_or_make_prefs_dir().and_then(|dir| sled::open(dir).ok()))
+        Db(Db::get_or_make_prefs_dir().and_then(|dir| {
+            sled::open(dir)
+                .inspect_err(|e| eprintln!("Cloud not insert into Db: {}", e))
+                .ok()
+        }))
     }
 }
 
@@ -347,13 +363,19 @@ type GlobalLog = Vec<(log::Level, String)>;
 pub struct Logger;
 
 impl Logger {
-    pub fn init(ctx: egui::Context) {
+    pub fn init(ctx: &egui::Context) {
         log::set_logger(&Logger)
             .ok()
             .map(|_| log::set_max_level(LevelFilter::Info))
-            // This can only ever be called once as log::set_logger returns an Error
-            // after the first call
-            .and_then(|_| EGUI_CTX.lock().map(|mut dummy_ctx| *dummy_ctx = ctx).ok());
+            .and_then(|_| {
+                // This can only ever be called once as log::set_logger returns an Error
+                // after the first call
+                EGUI_CTX
+                    .lock()
+                    .map(|mut dummy_ctx| *dummy_ctx = ctx.clone())
+                    .inspect_err(|e| eprintln!("Error: {}", e))
+                    .ok()
+            });
     }
 
     fn try_mut_log<F, T>(f: F) -> Option<T>
