@@ -39,7 +39,7 @@ impl Server {
             opt,
         };
 
-        log::info!("Server listening on {}", &self.host);
+        log::info!("Server launched and listening at {}", &self.host);
 
         for stream in listener.incoming() {
             self.handle_connection(stream?, &mut ctx)
@@ -56,7 +56,7 @@ impl Server {
         }
 
         tx_serv_stopped.send(())?;
-        log::info!("Goodbye!");
+        log::info!("\nServer stopped.");
         Ok(())
     }
 
@@ -197,7 +197,7 @@ impl<'req> Request<'req> {
                 ctx.rec_state = EdlRecordingState::Stopped;
                 let mut response = self.body()?.try_log_edit(ctx)?;
                 ctx.decode_handlers.decode_off()?;
-                log::info!("Ended recording!");
+                log::info!("\nEnded recording.");
                 response.content = format!("Stopped decoding with {}", response.content);
                 Ok(response)
             }
@@ -283,14 +283,14 @@ impl EditRequestData {
     }
 
     fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
-        log::info!("Waiting for timecode signal to start...");
+        log::info!("\nWaiting for timecode signal to start...");
         let tc = match ctx.decode_handlers.recv_frame() {
             Ok(f) => f,
             Err(DecodeErr::NoVal(_)) => return Ok("Exited".to_string().into()),
             Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
         };
         ctx.frame_queue.push(tc, self)?;
-        log::info!("Timecode signal detected and recording started!\n");
+        log::info!("Timecode signal detected and recording started.");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 }

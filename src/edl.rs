@@ -24,10 +24,6 @@ pub struct Edl {
 
 impl Edl {
     pub fn new(opt: &Opt) -> Result<Self, Error> {
-        // if !Path::new(&opt.dir).exists() {
-        //     std::fs::create_dir_all(&opt.dir)?;
-        // }
-
         let make_path = |n: Option<u32>| {
             let mut path = opt.dir.clone();
             match n {
@@ -50,15 +46,14 @@ impl Edl {
 
         let mut file = BufWriter::new(File::create_new(path)?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        file.write_all(format!("FCM: {}\n\n", String::from(opt.ntsc)).as_bytes())?;
+        file.write_all(format!("FCM: {}\n", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
-
         Ok(Edl { file })
     }
 
     pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
         let edit_str: String = edit.try_into()?;
-        self.file.write_all(edit_str.as_bytes())?;
+        self.file.write_all(format!("\n{edit_str}").as_bytes())?;
         self.file.flush()?;
         log::info!("{edit_str}");
         Ok(edit_str)
@@ -219,14 +214,14 @@ impl TryFrom<Edit> for String {
         let (cut_one_str, cut_two_str) = value.get_strs()?;
         match value {
             Edit::Cut(clip) => {
-                let from_cmt = format!("* FROM CLIP NAME: {}\n", clip.source_tape);
+                let from_cmt = format!("* FROM CLIP NAME: {}", clip.source_tape);
                 let from: String = EdlEditLine::from_clip(clip, cut_one_str, None)?.into();
-                Ok(format!("{from}{from_cmt}\n"))
+                Ok(format!("\n{from}\n{from_cmt}"))
             }
 
             Edit::Dissolve(dissolve) => {
-                let from_cmt = format!("* FROM CLIP NAME: {}\n", dissolve.from.source_tape);
-                let to_cmt = format!("* TO CLIP NAME: {}\n", dissolve.to.source_tape);
+                let from_cmt = format!("* FROM CLIP NAME: {}", dissolve.from.source_tape);
+                let to_cmt = format!("* TO CLIP NAME: {}", dissolve.to.source_tape);
                 let from: String = EdlEditLine::from_clip(dissolve.from, cut_one_str, None)?.into();
                 let to: String = EdlEditLine::from_clip(
                     dissolve.to,
@@ -234,17 +229,17 @@ impl TryFrom<Edit> for String {
                     Some(dissolve.edit_duration_frames),
                 )?
                 .into();
-                Ok(format!("{from}{to}{from_cmt}{to_cmt}\n"))
+                Ok(format!("\n{from}\n{to}\n{from_cmt}\n{to_cmt}"))
             }
 
             Edit::Wipe(wipe) => {
-                let from_cmt = format!("* FROM CLIP NAME: {}\n", wipe.from.source_tape);
-                let to_cmt = format!("* TO CLIP NAME: {}\n", wipe.to.source_tape);
+                let from_cmt = format!("* FROM CLIP NAME: {}", wipe.from.source_tape);
+                let to_cmt = format!("* TO CLIP NAME: {}", wipe.to.source_tape);
                 let from: String = EdlEditLine::from_clip(wipe.from, cut_one_str, None)?.into();
                 let to: String =
                     EdlEditLine::from_clip(wipe.to, cut_two_str, Some(wipe.edit_duration_frames))?
                         .into();
-                Ok(format!("{from}{to}{from_cmt}{to_cmt}\n"))
+                Ok(format!("\n{from}\n{to}\n{from_cmt}\n{to_cmt}"))
             }
         }
     }
@@ -335,7 +330,7 @@ impl EdlEditLine {
 impl From<EdlEditLine> for String {
     fn from(value: EdlEditLine) -> Self {
         format!(
-            "{}   {}   {}   {} {} {} {} {} {}\n",
+            "{}   {}   {}   {} {} {} {} {} {}",
             value.edit_number,
             value.source_tape,
             value.av_channels,

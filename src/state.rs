@@ -64,7 +64,7 @@ impl Default for Db {
     fn default() -> Self {
         Db(Db::get_or_make_prefs_dir().and_then(|dir| {
             sled::open(dir)
-                .inspect_err(|e| eprintln!("Cloud not insert into Db: {}", e))
+                .inspect_err(|e| eprintln!("Cloud not open Db: {}", e))
                 .ok()
         }))
     }

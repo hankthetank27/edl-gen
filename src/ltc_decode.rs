@@ -181,7 +181,7 @@ impl LTCListener {
         };
 
         log::info!(
-            "Input device: {}, Input channel: {}",
+            "Audio input device: {}\nAudio input channel: {}",
             device.name()?,
             input_channel_num
         );
@@ -262,7 +262,7 @@ impl LTCListener {
 
             stream.play()?;
             stop_listen_recv.recv()?;
-            log::info!("Stopped listening for LTC");
+            log::info!("Stopped listening for LTC.");
 
             Ok(())
         });
