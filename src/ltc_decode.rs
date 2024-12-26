@@ -41,16 +41,20 @@ impl LTCDevice {
 
     pub fn get_buffer_opts(&self) -> Option<Vec<u32>> {
         let (min, max) = match self.config.buffer_size() {
-            SupportedBufferSize::Unknown => return None,
-            SupportedBufferSize::Range { min, max } => (min, max),
-        };
-        Some(
-            (0..=13)
-                .map(|i| 16 << i)
-                .take_while(|&n| n <= *max && n <= 8192)
-                .filter(|&n| n >= *min)
-                .collect(),
-        )
+            SupportedBufferSize::Unknown => None,
+            SupportedBufferSize::Range { min, max } => Some((min, max)),
+        }?;
+        if min == max {
+            Some(vec![*min])
+        } else {
+            Some(
+                (0..=13)
+                    .map(|i| 16 << i)
+                    .take_while(|&n| n <= *max && n <= 8192)
+                    .filter(|&n| n >= *min)
+                    .collect(),
+            )
+        }
     }
 
     pub fn get_default_buffer_size(&self, opt_buffers: Option<&Vec<u32>>) -> Option<u32> {

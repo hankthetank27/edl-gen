@@ -371,6 +371,7 @@ fn validate_num_size(num: u32) -> Result<String, Error> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use vtc::rates;
 
     #[test]
     fn av_channels_from_str() {
@@ -415,8 +416,8 @@ mod test {
 
     #[test]
     fn validate_edit() {
-        let tc_1 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
-        let tc_2 = Timecode::with_frames("01:05:10:00", vtc::rates::F24).unwrap();
+        let tc_1 = Timecode::with_frames("01:00:00:00", rates::F24).unwrap();
+        let tc_2 = Timecode::with_frames("01:05:10:00", rates::F24).unwrap();
         let clip_1 = Clip {
             edit_number: 1,
             source_tape: "test_clip.mov".into(),
@@ -427,8 +428,8 @@ mod test {
             record_out: tc_2,
         };
 
-        let tc_1 = Timecode::with_frames("01:10:00:00", vtc::rates::F24).unwrap();
-        let tc_2 = Timecode::with_frames("01:15:00:00", vtc::rates::F24).unwrap();
+        let tc_1 = Timecode::with_frames("01:10:00:00", rates::F24).unwrap();
+        let tc_2 = Timecode::with_frames("01:15:00:00", rates::F24).unwrap();
         let clip_2 = Clip {
             edit_number: 2,
             source_tape: "test_clip_2.mov".into(),
