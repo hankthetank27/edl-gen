@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Error};
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use vtc::Timecode;
 
@@ -87,8 +86,8 @@ impl FrameData {
         let wipe_num = FrameData::validate_wipe_num(&edit_type, &req.wipe_num)?;
 
         Ok(FrameData {
-            source_tape: FrameData::validate_tape_name(&req.source_tape)?,
-            prev_tape: FrameData::validate_tape_name(prev_tape)?,
+            source_tape: req.source_tape.to_string(),
+            prev_tape: prev_tape.to_string(),
             av_channels: req.av_channels,
             timecode,
             edit_type,
@@ -126,13 +125,6 @@ impl FrameData {
             _ => Ok(None),
         }
     }
-
-    fn validate_tape_name(source_tape: &str) -> Result<String, Error> {
-        match source_tape.len().cmp(&8) {
-            Ordering::Greater => Err(anyhow!("Tape name cannot exceed 8 charaters")),
-            _ => Ok(source_tape.to_string()),
-        }
-    }
 }
 
 impl TryFrom<&str> for EditType {
@@ -159,7 +151,82 @@ impl From<&EditType> for String {
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-// }
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn push_valid_frame() {
+        let mut queue = FrameQueue::new();
+        let tc_1 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
+        let req_1 = EditRequestData {
+            edit_type: "Cut".into(),
+            edit_duration_frames: None,
+            wipe_num: None,
+            source_tape: "test_1".into(),
+            av_channels: AVChannels::default(),
+        };
+        let tc_2 = Timecode::with_frames("01:00:10:00", vtc::rates::F24).unwrap();
+        let req_2 = EditRequestData {
+            edit_type: "Wipe".into(),
+            edit_duration_frames: Some(1),
+            wipe_num: Some(1),
+            source_tape: "test_2".into(),
+            av_channels: AVChannels::default(),
+        };
+        assert!(queue.push(tc_1, &req_1).is_ok());
+        assert!(queue.push(tc_2, &req_2).is_ok());
+        assert_eq!(queue.count, 2);
+    }
+
+    #[test]
+    fn reject_invalid_frame() {
+        let mut queue = FrameQueue::new();
+        let tc_1 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
+        let req_1 = EditRequestData {
+            edit_type: "Cut".into(),
+            edit_duration_frames: None,
+            wipe_num: None,
+            source_tape: "test_1".into(),
+            av_channels: AVChannels::default(),
+        };
+        let tc_2 = Timecode::with_frames("01:00:10:00", vtc::rates::F24).unwrap();
+        let req_2 = EditRequestData {
+            edit_type: "Wipe".into(),
+            edit_duration_frames: None, //invalid
+            wipe_num: Some(1),
+            source_tape: "test_2".into(),
+            av_channels: AVChannels::default(),
+        };
+        let tc_3 = Timecode::with_frames("01:00:11:01", vtc::rates::F24).unwrap();
+        let req_3 = EditRequestData {
+            edit_type: "Wipe".into(),
+            edit_duration_frames: Some(1),
+            wipe_num: None, //invalid
+            source_tape: "test_3".into(),
+            av_channels: AVChannels::default(),
+        };
+        let tc_4 = Timecode::with_frames("01:00:11:01", vtc::rates::F24).unwrap();
+        let req_4 = EditRequestData {
+            edit_type: "Cut".into(),
+            edit_duration_frames: Some(1), //ignored
+            wipe_num: None,
+            source_tape: "test_4".into(),
+            av_channels: AVChannels::default(),
+        };
+        let tc_5 = Timecode::with_frames("01:00:11:01", vtc::rates::F24).unwrap();
+        let req_5 = EditRequestData {
+            edit_type: "nothin".into(), //invalid
+            edit_duration_frames: Some(1),
+            wipe_num: None, //invalid
+            source_tape: "test_5".into(),
+            av_channels: AVChannels::default(),
+        };
+        assert!(queue.push(tc_1, &req_1).is_ok());
+        assert!(!queue.push(tc_2, &req_2).is_ok());
+        assert!(!queue.push(tc_3, &req_3).is_ok());
+        assert!(queue.push(tc_4, &req_4).is_ok());
+        assert!(!queue.push(tc_5, &req_5).is_ok());
+        assert_eq!(queue.count, 2);
+    }
+}

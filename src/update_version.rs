@@ -56,5 +56,7 @@ mod test {
         assert!(bump_is_greater("1.2.0", "1.2.3").unwrap());
         assert!(bump_is_greater("0.2.0", "1.2.3").unwrap());
         assert!(bump_is_greater("0.2.0", "0.2.3").unwrap());
+        assert!(!bump_is_greater("0.2.0", "0.1.9").unwrap());
+        assert!(!bump_is_greater("1.2.0", "1.0.9").unwrap());
     }
 }

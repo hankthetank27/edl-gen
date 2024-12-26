@@ -251,6 +251,15 @@ pub struct AVChannels {
     audio: u8,
 }
 
+impl Default for AVChannels {
+    fn default() -> Self {
+        AVChannels {
+            video: true,
+            audio: 2,
+        }
+    }
+}
+
 impl From<AVChannels> for String {
     fn from(value: AVChannels) -> Self {
         (1..value.audio + 1).fold(
@@ -275,7 +284,7 @@ pub struct Wipe {
     edit_duration_frames: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Clip {
     edit_number: usize,
     source_tape: String,
@@ -315,7 +324,7 @@ impl EdlEditLine {
         Ok(EdlEditLine {
             edit_number: validate_num_size(clip.edit_number as u32)?,
             //TODO: need name validation
-            source_tape: clip.source_tape,
+            source_tape: trim_tape_name(clip.source_tape),
             av_channels: clip.av_channels.into(),
             source_in: clip.source_in.timecode(),
             source_out: clip.source_out.timecode(),
@@ -344,6 +353,10 @@ impl From<EdlEditLine> for String {
     }
 }
 
+fn trim_tape_name(tape: String) -> String {
+    tape.chars().take(8).collect()
+}
+
 fn validate_num_size(num: u32) -> Result<String, Error> {
     match num.cmp(&1000) {
         Ordering::Less => {
@@ -352,5 +365,114 @@ fn validate_num_size(num: u32) -> Result<String, Error> {
             Ok(format!("{prepend_zeros}{num}"))
         }
         _ => Err(anyhow!("Cannot exceed 999 edits")),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn av_channels_from_str() {
+        assert_eq!(String::from(AVChannels::default()), "VA1A2".to_string());
+        assert_eq!(
+            String::from(AVChannels {
+                video: false,
+                audio: 1
+            }),
+            "A1".to_string()
+        );
+        assert_eq!(
+            String::from(AVChannels {
+                video: true,
+                audio: 4
+            }),
+            "VA1A2A3A4".to_string()
+        );
+        assert_eq!(
+            String::from(AVChannels {
+                video: true,
+                audio: 0
+            }),
+            "V".to_string()
+        );
+        assert_eq!(
+            String::from(AVChannels {
+                video: false,
+                audio: 0
+            }),
+            "".to_string()
+        );
+    }
+
+    #[test]
+    fn validate_trimmed_tape_name() {
+        assert_eq!(trim_tape_name("".to_string()).len(), 0);
+        assert_eq!(trim_tape_name("test".to_string()).len(), 4);
+        assert_eq!(trim_tape_name("testtest".to_string()).len(), 8);
+        assert_eq!(trim_tape_name("testtest.test".to_string()).len(), 8);
+    }
+
+    #[test]
+    fn validate_edit() {
+        let tc_1 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
+        let tc_2 = Timecode::with_frames("01:05:10:00", vtc::rates::F24).unwrap();
+        let clip_1 = Clip {
+            edit_number: 1,
+            source_tape: "test_clip.mov".into(),
+            av_channels: AVChannels::default(),
+            source_in: tc_1,
+            source_out: tc_2,
+            record_in: tc_1,
+            record_out: tc_2,
+        };
+
+        let tc_1 = Timecode::with_frames("01:10:00:00", vtc::rates::F24).unwrap();
+        let tc_2 = Timecode::with_frames("01:15:00:00", vtc::rates::F24).unwrap();
+        let clip_2 = Clip {
+            edit_number: 2,
+            source_tape: "test_clip_2.mov".into(),
+            av_channels: AVChannels::default(),
+            source_in: tc_1,
+            source_out: tc_2,
+            record_in: tc_1,
+            record_out: tc_2,
+        };
+        let cut = Edit::Cut(clip_1.clone());
+        let cut_string: String = cut.try_into().unwrap();
+        let cut_cmp: String = "
+001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+* FROM CLIP NAME: test_clip.mov"
+            .into();
+        assert_eq!(cut_string, cut_cmp);
+
+        let wipe = Edit::Wipe(Wipe {
+            from: clip_1.clone(),
+            to: clip_2.clone(),
+            edit_duration_frames: 15,
+            wipe_number: 1,
+        });
+        let wipe_string: String = wipe.try_into().unwrap();
+        let wipe_cmp: String = "
+001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+002   test_cli   VA1A2   W001 015 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
+* FROM CLIP NAME: test_clip.mov
+* TO CLIP NAME: test_clip_2.mov"
+            .into();
+        assert_eq!(wipe_string, wipe_cmp);
+
+        let dissove = Edit::Dissolve(Dissolve {
+            from: clip_1.clone(),
+            to: clip_2.clone(),
+            edit_duration_frames: 0,
+        });
+        let dissolve_string: String = dissove.try_into().unwrap();
+        let dissove_cmp: String = "
+001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+002   test_cli   VA1A2   D    000 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
+* FROM CLIP NAME: test_clip.mov
+* TO CLIP NAME: test_clip_2.mov"
+            .into();
+        assert_eq!(dissolve_string, dissove_cmp);
     }
 }
