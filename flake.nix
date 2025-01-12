@@ -1,7 +1,7 @@
 # THIS FLAKE IS INCOMPLETE AND WILL NOT BUILD
-# asio-sys will not build because of some missing intrinsics 
+# asio-sys will not build because of some missing intrinsics
 # refer to win-build script for a "works on my machine" configuration
- 
+
 {
   inputs = {
     fenix.url = "github:nix-community/fenix";
@@ -10,8 +10,16 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
-  outputs = { self, fenix, flake-utils, naersk, nixpkgs }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      fenix,
+      flake-utils,
+      naersk,
+      nixpkgs,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = (import nixpkgs) {
           inherit system;
@@ -22,7 +30,8 @@
           sha256 = "sha256-4x3OiaJvC1P6cozsjL1orDr3nTdgDQrh2hlU2hDDu2Q=";
         };
 
-        toolchain = with fenix.packages.${system};
+        toolchain =
+          with fenix.packages.${system};
           combine [
             minimal.rustc
             minimal.cargo
@@ -34,7 +43,7 @@
           rustc = toolchain;
         };
 
-        mingwIncludePath ="/opt/homebrew/cellar/mingw-w64/12.0.0_1/toolchain-x86_64/x86_64-w64-mingw32/include";
+        mingwIncludePath = "/opt/homebrew/cellar/mingw-w64/12.0.0_1/toolchain-x86_64/x86_64-w64-mingw32/include";
         llvmIncludePath = "/opt/homebrew/opt/llvm/include";
 
         # mingwIncludePath ="${pkgs.pkgsCross.mingwW64.windows.mingw_w64_headers}/include";
@@ -43,7 +52,8 @@
         # llvmIncludePath = "${pkgs.libclang.lib}/lib/clang/16/include";
         # llvmIncludePath = "${pkgs.libclang.dev}/include";
 
-      in rec {
+      in
+      rec {
         defaultPackage = packages.x86_64-pc-windows-gnu;
 
         packages.x86_64-pc-windows-gnu = naersk'.buildPackage {

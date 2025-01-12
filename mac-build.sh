@@ -38,9 +38,9 @@ echo "Creating universal binary..."
 lipo -create \
     "target/x86_64-apple-darwin/release/$PROJECT_NAME" \
     "target/aarch64-apple-darwin/release/$PROJECT_NAME" \
-    -output $BUILD_DIR/$PROJECT_NAME
+    -output $BUILD_DIR$PROJECT_NAME
 
-chmod +x "$BUILD_DIR/$PROJECT_NAME"
+chmod +x "$BUILD_DIR$PROJECT_NAME"
 
 RPATH_OUTPUT=$(otool -l $BUILD_DIR/$PROJECT_NAME | grep -A 2 LC_RPATH)
 if [ -z "$RPATH_OUTPUT" ]; then
@@ -52,5 +52,5 @@ else
 fi
 
 echo
-echo "MacOS fat binary created at $BUILD_DIR/$PROJECT_NAME!"
+echo "MacOS fat binary created at $BUILD_DIR$PROJECT_NAME!"
 

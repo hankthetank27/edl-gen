@@ -342,7 +342,7 @@ impl eframe::App for App {
                         .clicked()
                     {
                         if let Err(e) = update_version::update() {
-                            eprintln!("{}", e);
+                            eprintln!("Error updating: {}", e);
                         }
                     }
                 });

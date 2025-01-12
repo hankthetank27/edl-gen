@@ -8,7 +8,6 @@ use crate::server::EditRequestData;
 // for tracking frame logs in queue.
 // since we have no information about what the out time will be we have to wait
 // until the next log and pop the prior logged value.
-
 #[derive(Debug)]
 pub struct FrameQueue {
     log: VecDeque<FrameData>,
