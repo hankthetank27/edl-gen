@@ -32,17 +32,42 @@
         };
 
         buildTargets = {
-          aarch64-darwin = "aarch64-apple-darwin";
-          x86_64-darwin = "x86_64-apple-darwin";
-          x86_64-pc-windows-gnu = "x86_64-pc-windows-gnu";
+          aarch64-darwin = {
+            rustTarget = "aarch64-apple-darwin";
+            crossSystemConfig = "aarch64-apple-darwin";
+          };
+          x86_64-darwin = {
+            rustTarget = "x86_64-apple-darwin";
+            crossSystemConfig = "x86_64-apple-darwin";
+          };
+          aarch64-linux = {
+            rustTarget = "aarch64-unknown-linux-gnu";
+            crossSystemConfig = "aarch64-unknown-linux-gnu";
+          };
+          x86_64-linux = {
+            rustTarget = "x86_64-unknown-linux-gnu";
+            crossSystemConfig = "x86_64-unknown-linux-gnu";
+          };
+          x86_64-windows = {
+            crossSystemConfig = "x86_64-w64-mingw32";
+            rustTarget = "x86_64-pc-windows-gnu";
+          };
           universal-darwin = { };
-          #x86_64-linux
-          #aarch64-linux
         };
 
         makeSystemsFromNames =
           systemNames: callback:
           builtins.foldl' (acc: systemName: acc // { ${systemName} = callback systemName; }) { } systemNames;
+
+        mkCrossPkgs =
+          system: targetSystem:
+          let
+            crossSystem = buildTargets.${targetSystem}.crossSystemConfig;
+          in
+          import nixpkgs ({
+            inherit system crossSystem;
+            # crossOverlays = import ./nix/overlays.nix;
+          });
 
         makeToolchain =
           system:
@@ -54,11 +79,26 @@
           ];
       in
       rec {
-        devShells.default = pkgs.mkShell {
-          buildInputs = [
-            (makeToolchain system)
-          ];
-        };
+        devShells.default =
+          let
+            pkgsCross = mkCrossPkgs system "x86_64-linux";
+          in
+
+          pkgs.mkShell {
+            nativeBuildInputs = [
+              pkgs.pkg-config
+            ];
+
+            buildInputs = [
+              pkgsCross.alsa-lib.dev
+              pkgsCross.fontconfig.dev
+              # (makeToolchain system)
+            ];
+
+            shellHook = ''
+              PKG_CONFIG_PATH="$PKG_CONFIG_PATH:${pkgsCross.alsa-lib.dev}:${pkgsCross.fontconfig.dev}"
+            '';
+          };
 
         packages = makeSystemsFromNames (builtins.attrNames buildTargets) (
           systemName:
