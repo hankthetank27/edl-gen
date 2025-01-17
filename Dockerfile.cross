@@ -1,8 +1,0 @@
-ARG CROSS_BASE_IMAGE
-FROM $CROSS_BASE_IMAGE
-RUN dpkg --add-architecture $CROSS_DEB_ARCH
-RUN apt-get update
-RUN apt-get install --assume-yes libasound2-dev:$CROSS_DEB_ARCH
-ENV PKG_CONFIG_PATH="$PKG_CONFIG_PATH:/usr/local/lib/$CROSS_DEB_ARCH/libasound2-dev"
-COPY . /app
-WORKDIR /app

@@ -1,7 +1,0 @@
-/target
-/build
-/output
-**/.DS_Store
-flamegraph*
-/.env
-/result

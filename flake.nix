@@ -79,26 +79,11 @@
           ];
       in
       rec {
-        devShells.default =
-          let
-            pkgsCross = mkCrossPkgs system "x86_64-linux";
-          in
-
-          pkgs.mkShell {
-            nativeBuildInputs = [
-              pkgs.pkg-config
-            ];
-
-            buildInputs = [
-              pkgsCross.alsa-lib.dev
-              pkgsCross.fontconfig.dev
-              # (makeToolchain system)
-            ];
-
-            shellHook = ''
-              PKG_CONFIG_PATH="$PKG_CONFIG_PATH:${pkgsCross.alsa-lib.dev}:${pkgsCross.fontconfig.dev}"
-            '';
-          };
+        devShells.default = pkgs.mkShell {
+          # buildInputs = [
+          #   (makeToolchain system buildTargets.${system}.rustTarget)
+          # ];
+        };
 
         packages = makeSystemsFromNames (builtins.attrNames buildTargets) (
           systemName:
