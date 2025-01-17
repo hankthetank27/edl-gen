@@ -19,9 +19,9 @@ fi
 export CARGO_VERSION=$(awk -F ' = ' '$1 ~ /version/ { gsub(/[\"]/, "", $2); printf("%s",$2) }' Cargo.toml)
 
 echo "Compiling MacOS binary..."
-./mac-build.sh
+./script/mac-build.sh
 echo
 echo "Compiling Windows binary..."
-./win-build.sh
+./script/win-build.sh
 conveyor make copied-site
 echo "Release deployed as draft on GitHub @ https://github.com/hankthetank27/edl-gen/releases"
