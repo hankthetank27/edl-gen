@@ -31,5 +31,5 @@ vtc = "0.1.13"
 
 # https://github.com/bitshifter/mathbench-rs/issues/35
 # fixes nightly build
-[patch.crates-io]
-pathfinder_simd  = { git = "https://github.com/theoparis/pathfinder.git", rev = "05f19143e21a96027de7cf2d60fa47ecd8899d21", optional = true }
+# [patch.crates-io]
+# pathfinder_simd  = { git = "https://github.com/theoparis/pathfinder.git", rev = "05f19143e21a96027de7cf2d60fa47ecd8899d21", optional = true }
