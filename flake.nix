@@ -1,10 +1,7 @@
-# TODO: windows cross compilation not working
-# asio-sys will not build because of some missing intrinsics
-# refer to win-build script for a "works on my machine" configuration
+# TODO: fix cross compilation for windows (?)
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -19,142 +16,114 @@
     {
       self,
       fenix,
-      flake-utils,
       naersk,
       nixpkgs,
     }:
 
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = (import nixpkgs) {
-          inherit system;
+    with builtins;
+    let
+      projectName = (fromTOML (readFile ./Cargo.toml)).package.name;
+
+      buildTargets = {
+        aarch64-darwin = {
+          rustTarget = "aarch64-apple-darwin";
+          crossSystemConfig = "aarch64-apple-darwin";
+        };
+        x86_64-darwin = {
+          rustTarget = "x86_64-apple-darwin";
+          crossSystemConfig = "x86_64-apple-darwin";
+        };
+        aarch64-linux = {
+          rustTarget = "aarch64-unknown-linux-gnu";
+          crossSystemConfig = "aarch64-unknown-linux-gnu";
+        };
+        x86_64-linux = {
+          rustTarget = "x86_64-unknown-linux-gnu";
+          crossSystemConfig = "x86_64-unknown-linux-gnu";
+        };
+      };
+
+      systemsFrom = systems: f: foldl' (acc: (system: acc // { ${system} = f system; })) { } systems;
+
+      mkPkgs =
+        {
+          system,
+          crossSystemConfig ? system,
+        }:
+        let
+          crossSystem = crossSystemConfig;
+        in
+        (import nixpkgs) {
+          inherit system crossSystem;
         };
 
-        buildTargets = {
-          aarch64-darwin = {
-            rustTarget = "aarch64-apple-darwin";
-            crossSystemConfig = "aarch64-apple-darwin";
+      mkToolchain =
+        {
+          system,
+          rustTarget ? buildTargets.${system}.rustTarget,
+        }:
+        with fenix.packages.${system};
+        combine [
+          stable.rustc
+          stable.cargo
+          targets.${rustTarget}.stable.rust-std
+        ];
+    in
+    rec {
+      devShells.default = systemsFrom (attrNames buildTargets) (
+        system:
+        let
+          pkgs = mkPkgs { inherit system; };
+          rsToolchain = mkToolchain { inherit system; };
+        in
+        with pkgs;
+        {
+          defualt = callPackage ./nix/shell.nix { inherit rsToolchain; };
+        }
+      );
+
+      packages = systemsFrom (attrNames buildTargets) (
+        system:
+        let
+          pkgs = mkPkgs { inherit system; };
+          rsToolchain = mkToolchain { inherit system; };
+        in
+        with pkgs;
+        {
+
+          default = callPackage ./nix/build.nix {
+            inherit
+              buildTargets
+              system
+              rsToolchain
+              naersk
+              ;
           };
-          x86_64-darwin = {
-            rustTarget = "x86_64-apple-darwin";
-            crossSystemConfig = "x86_64-apple-darwin";
+
+          universal-darwin = stdenv.mkDerivation {
+            name = "MacOS Universal Binary";
+            src = ./.;
+            buildInputs = [ libllvm ];
+            buildCommand = ''
+              mkdir -p $out/bin
+              ${libllvm}/bin/llvm-lipo -create \
+                ${packages.aarch64-darwin.default}/bin/${projectName} \
+                ${packages.x86_64-darwin.default}/bin/${projectName} \
+                -output $out/bin/${projectName}
+            '';
           };
-          aarch64-linux = {
-            rustTarget = "aarch64-unknown-linux-gnu";
-            crossSystemConfig = "aarch64-unknown-linux-gnu";
-          };
-          x86_64-linux = {
-            rustTarget = "x86_64-unknown-linux-gnu";
-            crossSystemConfig = "x86_64-unknown-linux-gnu";
-          };
-          x86_64-windows = {
-            crossSystemConfig = "x86_64-w64-mingw32";
-            rustTarget = "x86_64-pc-windows-gnu";
-          };
-          universal-darwin = { };
-        };
+        }
 
-        makeSystemsFromNames =
-          systemNames: callback:
-          builtins.foldl' (acc: systemName: acc // { ${systemName} = callback systemName; }) { } systemNames;
-
-        mkCrossPkgs =
-          system: targetSystem:
-          let
-            crossSystem = buildTargets.${targetSystem}.crossSystemConfig;
-          in
-          import nixpkgs ({
-            inherit system crossSystem;
-            # crossOverlays = import ./nix/overlays.nix;
-          });
-
-        makeToolchain =
-          system:
-          with fenix.packages.${system};
-          combine [
-            minimal.rustc
-            minimal.cargo
-            targets.${buildTargets.${system}}.latest.rust-std
-          ];
-      in
-      rec {
-        devShells.default = pkgs.mkShell {
-          # buildInputs = [
-          #   (makeToolchain system buildTargets.${system}.rustTarget)
-          # ];
-        };
-
-        packages = makeSystemsFromNames (builtins.attrNames buildTargets) (
-          systemName:
-          let
-            toolchain = makeToolchain systemName;
-
-            naersk' = naersk.lib.${system}.override {
-              cargo = toolchain;
-              rustc = toolchain;
-            };
-          in
-
-          if systemName == "x86_64-pc-windows-gnu" then
-            let
-              asioSdk = pkgs.fetchzip {
-                url = "https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip";
-                sha256 = "sha256-4x3OiaJvC1P6cozsjL1orDr3nTdgDQrh2hlU2hDDu2Q=";
-              };
-            in
-            naersk'.buildPackage {
-              src = ./.;
-              strictDeps = true;
-
-              depsBuildBuild = with pkgs; [
-                pkgsCross.mingwW64.stdenv.cc
-                pkgsCross.mingwW64.windows.pthreads
-                # pkgs.libclang.dev
-                # pkgs.libclang.lib
-              ];
-
-              CARGO_BUILD_TARGET = "${systemName}";
-              CPAL_ASIO_DIR = "${asioSdk}";
-              # CPLUS_INCLUDE_PATH = "${mingwIncludePath}:${llvmIncludePath}";
-
-              # CC_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-gcc";
-              # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
-              # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "x86_64-w64-mingw32-gcc";
-              # BINDGEN_EXTRA_CLANG_ARGS="-I${pkgs.libclang.lib}/lib/clang/16/include";
-
-            }
-
-          else if systemName == "universal-darwin" then
-            let
-              projectName = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.name;
-
-              universalBinary = pkgs.stdenv.mkDerivation {
-                name = "universal-darwin-binary";
-                src = ./.;
-
-                buildInputs = [ pkgs.libllvm ];
-
-                buildCommand = ''
-                  mkdir -p $out/bin
-                  ${pkgs.libllvm}/bin/llvm-lipo -create \
-                    ${packages.aarch64-darwin}/bin/${projectName} \
-                    ${packages.x86_64-darwin}/bin/${projectName} \
-                    -output $out/bin/${projectName}
-                '';
-              };
-            in
-            universalBinary
-
-          else
-            naersk'.buildPackage {
-              src = ./.;
-              strictDeps = true;
-              CARGO_BUILD_TARGET = buildTargets.${systemName};
-            }
-        );
-
-        defaultPackage = packages.${system};
-      }
-    );
+        // callPackage ./nix/build-cross.nix {
+          inherit
+            system
+            systemsFrom
+            buildTargets
+            mkPkgs
+            mkToolchain
+            naersk
+            ;
+        }
+      );
+    };
 }
