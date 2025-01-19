@@ -27,6 +27,9 @@
   pkg-config,
   fetchzip,
   lib,
+  stdenv,
+  llvm,
+# mingwW64,
 }:
 with builtins;
 let
@@ -68,64 +71,68 @@ prefixCross (
     # this does not work at all lol
     if crossSystem == "x86_64-windows" then
       let
-        # we are cross compliling and make a toolchain for our native system in this case
         asioSdk = fetchzip {
           url = "https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip";
           sha256 = "sha256-4x3OiaJvC1P6cozsjL1orDr3nTdgDQrh2hlU2hDDu2Q=";
         };
       in
-      naersk'.buildPackage {
+      naersk'.buildPackage rec {
         src = ../.;
         strictDeps = true;
 
         depsBuildBuild = [
-          pkgsCross.mingwW64.stdenv.cc
-          pkgsCross.mingwW64.windows.pthreads
-          # pkgs.libclang.dev
-          # pkgs.libclang.lib
+          pkgsCross.stdenv.cc
+          pkgsCross.windows.pthreads
         ];
 
         CPAL_ASIO_DIR = asioSdk;
         CARGO_BUILD_TARGET = rustTarget;
 
+        CC = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}cc";
         TARGET_CC = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}cc";
         TARGET_AR = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}ar";
-        # CPLUS_INCLUDE_PATH = "${mingwIncludePath}:${llvmIncludePath}";
+
+        CPLUS_INCLUDE_PATH = "$CPLUS_INCLUDE_PATH:${pkgsCross.stdenv.cc.libc.dev}/include:${llvm.dev}/include";
+
+        CARGO_BUILD_RUSTFLAGS = [
+          "-C"
+          "linker=${CC}"
+        ];
+
+        # cp -p "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/lib/libstdc++-6.dll" $X86_BUILD_DIR
+        # "${pkgsCross.stdenv.cc.lib}/lib/libstdc++-6.dll"
+        # cp -p "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/lib/libgcc_s_seh-1.dll" $X86_BUILD_DIR
+        # "${pkgsCross.stdenv.cc.lib}/lib/libgcc_s_seh-1.dll"
+        # cp -p "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/bin/libwinpthread-1.dll" $X86_BUILD_DIR
+        # ???
 
         # CC_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-gcc";
-        # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
-        # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "x86_64-w64-mingw32-gcc";
         # BINDGEN_EXTRA_CLANG_ARGS="-I${pkgs.libclang.lib}/lib/clang/16/include";
       }
 
     else
-      # TODO: have not tested linux -> darwin yet..
-      naersk'.buildPackage (
-        {
-          src = ../.;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = rustTarget;
-        }
-        // lib.optionalAttrs pkgsCross.stdenv.hostPlatform.isLinux rec {
+      naersk'.buildPackage (rec {
+        src = ../.;
+        strictDeps = true;
+        CARGO_BUILD_TARGET = rustTarget;
 
-          nativeBuildInputs = [
-            pkg-config
-          ];
+        nativeBuildInputs = [ ] ++ lib.optionals stdenv.hostPlatform.isLinux [ pkg-config ];
 
-          buildInputs = [
+        buildInputs =
+          [ ]
+          ++ lib.optionals stdenv.hostPlatform.isLinux [
             pkgsCross.alsa-lib.dev
             pkgsCross.fontconfig.dev
           ];
 
-          CC = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}cc";
-          TARGET_CC = CC;
-          TARGET_AR = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}ar";
+        CC = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}cc";
+        TARGET_CC = CC;
+        TARGET_AR = "${pkgsCross.stdenv.cc}/bin/${pkgsCross.stdenv.cc.targetPrefix}ar";
 
-          CARGO_BUILD_RUSTFLAGS = [
-            "-C"
-            "linker=${CC}"
-          ];
-        }
-      )
+        CARGO_BUILD_RUSTFLAGS = [
+          "-C"
+          "linker=${CC}"
+        ];
+      })
   )
 )

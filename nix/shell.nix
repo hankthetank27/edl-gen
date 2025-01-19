@@ -12,10 +12,16 @@
 }:
 mkShell {
   packages = [ ] ++ lib.optionals stdenv.hostPlatform.isLinux [ pkg-config ];
+
   buildInputs =
-    [
-      rsToolchain
-    ]
+    [ rsToolchain ]
+    ++ lib.optionals stdenv.hostPlatform.isLinux [
+      alsa-lib
+      fontconfig
+    ];
+
+  env.LD_LIBRARY_PATH =
+    lib.makeLibraryPath [ ]
     ++ lib.optionals stdenv.hostPlatform.isLinux [
       alsa-lib
       fontconfig

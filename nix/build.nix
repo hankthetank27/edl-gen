@@ -26,7 +26,7 @@ naersk'.buildPackage (
     src = ../.;
     strictDeps = true;
 
-    packages = [ ] ++ lib.optionals stdenv.hostPlatform.isLinux [ pkg-config ];
+    nativeBuildInputs = [ ] ++ lib.optionals stdenv.hostPlatform.isLinux [ pkg-config ];
 
     buildInputs =
       [ ]

@@ -48,14 +48,21 @@
       mkPkgs =
         {
           system,
-          crossSystemConfig ? system,
+          crossSystemConfig ? null,
         }:
-        let
-          crossSystem = crossSystemConfig;
-        in
-        (import nixpkgs) {
-          inherit system crossSystem;
-        };
+        (import nixpkgs) (
+          {
+            inherit system;
+          }
+          // (
+            if crossSystemConfig == null then
+              { }
+            else
+              {
+                crossSystem.config = crossSystemConfig;
+              }
+          )
+        );
 
       mkToolchain =
         {
@@ -69,7 +76,7 @@
           targets.${rustTarget}.stable.rust-std
         ];
     in
-    rec {
+    {
       devShells.default = systemsFrom (attrNames buildTargets) (
         system:
         let
@@ -107,8 +114,8 @@
             buildCommand = ''
               mkdir -p $out/bin
               ${libllvm}/bin/llvm-lipo -create \
-                ${packages.aarch64-darwin.default}/bin/${projectName} \
-                ${packages.x86_64-darwin.default}/bin/${projectName} \
+                ${self.packages.aarch64-darwin.default}/bin/${projectName} \
+                ${self.packages.x86_64-darwin.default}/bin/${projectName} \
                 -output $out/bin/${projectName}
             '';
           };
