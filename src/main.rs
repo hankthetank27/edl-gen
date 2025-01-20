@@ -6,10 +6,18 @@ use eframe::egui::{self, FontData, FontDefinitions};
 use font_kit::{
     family_name::FamilyName, handle::Handle, properties::Properties, source::SystemSource,
 };
-use std::fs;
+use std::{env, fs};
 
 fn main() -> Result<(), Error> {
     let start = std::time::Instant::now();
+    let version = env!("CARGO_PKG_VERSION");
+
+    if let Some(req_version) = env::args().nth(1) {
+        if req_version == "-v" || req_version == "--version" {
+            println!("EDLgen v{}", version);
+            return Ok(());
+        }
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([480.0, 600.0]),

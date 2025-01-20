@@ -105,9 +105,6 @@ prefixCross (
         # "${pkgsCross.stdenv.cc.lib}/lib/libgcc_s_seh-1.dll"
         # cp -p "/opt/homebrew/opt/mingw-w64/toolchain-x86_64/x86_64-w64-mingw32/bin/libwinpthread-1.dll" $X86_BUILD_DIR
         # ???
-
-        # CC_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-gcc";
-        # BINDGEN_EXTRA_CLANG_ARGS="-I${pkgs.libclang.lib}/lib/clang/16/include";
       }
 
     else

@@ -1,0 +1,96 @@
+name: ci
+on:
+  pull_request:
+  push:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+jobs:
+  build-release:
+    name: build-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: x86-64
+            cargo-tool: cross
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            binary: aarch64
+            cargo-tool: cross
+          # macos>=14 runs exclusively on aarch64 and will thus fail to execute properly for x64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            binary: x86_64
+            cargo-tool: cargo
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: arm64
+            cargo-tool: cargo
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: x86-64
+            cargo-tool: cargo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          target: ${{ matrix.target }}
+      - name: Handle Rust dependencies caching
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: v1-${{ matrix.target }}
+      - name: Build release binary
+        uses: clechasseur/rs-cargo@v3
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
+          tool: ${{ matrix.cargo-tool }}
+      - name: Verify binary architecture
+        shell: bash
+        run: |
+          BINARY_PATH="target/${{ matrix.target }}/release/edl-gen"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            BINARY_PATH="${BINARY_PATH}.exe"
+          fi
+          if ! file -b "$BINARY_PATH" | grep -q "${{ matrix.binary }}"; then
+            echo "error: Architecture mismatch"
+            echo "Expected architecture: '${{ matrix.binary }}'"
+            echo "Found binary type: '$(file -b "$BINARY_PATH")'"
+            exit 1
+          fi
+          echo "ok: Architecture match"
+      - name: Ensure binary successfully boots
+        shell: bash
+        run: |
+          BINARY_PATH="target/${{ matrix.target }}/release/edl-gen"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            BINARY_PATH="${BINARY_PATH}.exe"
+          fi
+          case "${{ matrix.target }}" in
+            x86_64-pc-windows-msvc)
+              ./$BINARY_PATH --version;;
+            aarch64*)
+              echo "We cannot test an ARM binary on a AMD64 runner" ;;
+            *)
+              ./$BINARY_PATH --version;;
+          esac
+      - name: Run tests
+        uses: clechasseur/rs-cargo@v3
+        with:
+          command: test
+          args: "--workspace --target ${{ matrix.target }}"
+          tool: ${{ matrix.cargo-tool }}

@@ -1,0 +1,163 @@
+name: release
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+jobs:
+  build-release:
+    name: build-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: x86-64
+            cargo-tool: cross
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            binary: aarch64
+            cargo-tool: cross
+          # macos>=14 runs exclusively on aarch64 and will thus fail to execute properly for x64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            binary: x86_64
+            cargo-tool: cargo
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: arm64
+            cargo-tool: cargo
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: x86-64
+            cargo-tool: cargo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          target: ${{ matrix.target }}
+      - name: Handle Rust dependencies caching
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: v1-${{ matrix.target }}
+      - name: Build release binary
+        uses: clechasseur/rs-cargo@v3
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
+          tool: ${{ matrix.cargo-tool }}
+      - name: Verify binary architecture
+        shell: bash
+        run: |
+          BINARY_PATH="target/${{ matrix.target }}/release/edl-gen"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            BINARY_PATH="${BINARY_PATH}.exe"
+          fi
+          if ! file -b "$BINARY_PATH" | grep -q "${{ matrix.binary }}"; then
+            echo "error: Architecture mismatch"
+            echo "Expected architecture: '${{ matrix.binary }}'"
+            echo "Found binary type: '$(file -b "$BINARY_PATH")'"
+            exit 1
+          fi
+          echo "ok: Architecture match"
+      - name: Ensure binary successfully boots
+        shell: bash
+        run: |
+          BINARY_PATH="target/${{ matrix.target }}/release/edl-gen"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            BINARY_PATH="${BINARY_PATH}.exe"
+          fi
+          case "${{ matrix.target }}" in
+            x86_64-pc-windows-msvc)
+              ./$BINARY_PATH --version;;
+            aarch64*)
+              echo "We cannot test an ARM binary on a AMD64 runner" ;;
+            *)
+              ./$BINARY_PATH --version;;
+          esac
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edl-gen-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/edl-gen${{ matrix.target == 'x86_64-pc-windows-msvc' && '.exe' || '' }}
+          retention-days: 1
+
+  create-universal-binary:
+    name: Create Universal macOS Binary
+    needs: build-release
+    runs-on: macos-latest
+    steps:
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: edl-gen-x86_64-apple-darwin
+          path: x86_64-binary
+
+      - name: Download aarch64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: edl-gen-aarch64-apple-darwin
+          path: arm64-binary
+
+      - name: Create universal binary
+        run: |
+          chmod +x x86_64-binary/edl-gen arm64-binary/edl-gen
+          lipo -create -output edl-gen \
+            x86_64-binary/edl-gen \
+            arm64-binary/edl-gen
+
+      - name: Verify universal binary
+        run: |
+          chmod +x edl-gen
+          lipo -info edl-gen
+          ./edl-gen --version
+
+      - name: Upload universal binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: edl-gen-macos-universal
+          path: edl-gen
+          retention-days: 1
+
+  deploy:
+    name: Deploy builds
+    needs: [build-release, create-universal-binary]
+    runs-on: ubuntu-latest
+    steps: 
+      - name: Checkout
+        uses: actions/checkout@v4
+          
+      - name: Download macOS Universal build
+        uses: actions/download-artifact@v4
+        with:
+          name: edl-gen-macos-universal
+          path: build/macos
+          
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: edl-gen-x86_64-pc-windows-msvc
+          path: build/windows
+
+      - name: Run Conveyor
+        uses: hydraulic-software/conveyor/actions/build@v16.0
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          VERSION: ${{ github.ref_name }}
+        with:
+          command: make copied-site
+          signing_key: ${{ secrets.SIGNING_KEY }}
+          agree_to_license: 1
