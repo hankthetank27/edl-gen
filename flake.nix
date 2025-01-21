@@ -1,4 +1,3 @@
-# TODO: fix cross compilation for windows (?)
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
