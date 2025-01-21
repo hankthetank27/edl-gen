@@ -44,4 +44,4 @@ cargo check
 git add .
 git commit -m "bump version - $VERSION_NEXT"
 git tag -a "$VERSION_NEXT" -m "Release: $VERSION_NEXT"
-git push origin ci --follow-tags
+git push origin main --follow-tags
