@@ -25,10 +25,10 @@ impl LTCDevice {
     fn default_host() -> cpal::Host {
         #[allow(unused_mut)]
         let mut host = cpal::default_host();
-        #[cfg(target_os = "windows")]
-        if let Ok(windows_host) = cpal::host_from_id(cpal::HostId::Asio) {
-            host = windows_host;
-        }
+        // #[cfg(target_os = "windows")]
+        // if let Ok(windows_host) = cpal::host_from_id(cpal::HostId::Asio) {
+        //     host = windows_host;
+        // }
         host
     }
 

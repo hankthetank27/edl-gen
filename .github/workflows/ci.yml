@@ -59,6 +59,7 @@ jobs:
           command: build
           args: --release --target ${{ matrix.target }}
           tool: ${{ matrix.cargo-tool }}
+
       - name: Verify binary architecture
         shell: bash
         run: |
@@ -73,6 +74,7 @@ jobs:
             exit 1
           fi
           echo "ok: Architecture match"
+
       - name: Ensure binary successfully boots
         shell: bash
         run: |
@@ -88,9 +90,17 @@ jobs:
             *)
               ./$BINARY_PATH --version;;
           esac
+
       - name: Run tests
         uses: clechasseur/rs-cargo@v3
         with:
           command: test
           args: "--workspace --target ${{ matrix.target }}"
           tool: ${{ matrix.cargo-tool }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edl-gen-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/edl-gen${{ matrix.target == 'x86_64-pc-windows-msvc' && '.exe' || '' }}
+          retention-days: 1
