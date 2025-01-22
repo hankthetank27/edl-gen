@@ -40,7 +40,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn load_system_font() -> FontDefinitions {
-    const FONT_SYSTEM_SANS_SERIF: &'static str = "System Sans Serif";
+    const FONT_SYSTEM_SANS_SERIF: &str = "System Sans Serif";
     let buf = SystemSource::new()
         .select_best_match(&[FamilyName::SansSerif], &Properties::new())
         .ok()

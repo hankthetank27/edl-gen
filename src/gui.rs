@@ -175,14 +175,17 @@ impl App {
     fn refresh_input_device(&mut self, ui: &mut Ui) {
         let mut button = ui.button("Refresh Devices");
         if button.clicked() {
-            self.opt.ltc_devices = LTCDevice::try_get_devices().ok();
+            self.opt.ltc_devices = LTCDevice::try_get_devices(&self.opt.ltc_host).ok();
             if self.opt.ltc_device.is_none() {
                 let LTCConfig {
-                    ltc_devices: _,
                     ltc_device,
                     input_channel,
                     buffer_size,
-                } = LTCConfig::default_no_device_list();
+                    ..
+                } = LTCConfig::default_no_device_list(
+                    Arc::clone(&self.opt.ltc_host),
+                    Arc::clone(&self.opt.ltc_hosts),
+                );
                 self.opt.ltc_device = ltc_device;
                 self.opt.input_channel = input_channel;
                 self.opt.buffer_size = buffer_size;
