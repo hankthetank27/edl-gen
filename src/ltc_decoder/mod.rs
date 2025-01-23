@@ -135,7 +135,7 @@ impl LTCListener {
             frame_recv,
             decode_state_sender,
             stop_listen_sender,
-            self.opt,
+            self.opt.into(),
         )
     }
 
@@ -185,6 +185,7 @@ impl DecodeContext {
             input_channel,
         }
     }
+
     fn handle_decode<T: AsPrimitive<f32>>(&mut self, data: &[T]) {
         if let Ok(state) = self.decode_state_recv.try_recv() {
             let _ = self.frame_recv_drain.try_recv();
@@ -234,6 +235,7 @@ impl DecodeContext {
     }
 }
 
+#[derive(Clone)]
 pub struct DecodeHandlers {
     pub tx_ltc_frame: single_val_channel::Sender<LTCFrame>,
     pub rx_ltc_frame: single_val_channel::Receiver<LTCFrame>,

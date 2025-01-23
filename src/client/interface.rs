@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Error};
-use eframe::egui::{self, mutex::Mutex, Ui};
+use eframe::egui::{self, Ui};
 use ltc::LTCFrame;
+use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{

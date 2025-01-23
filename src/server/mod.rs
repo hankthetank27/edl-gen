@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
-use eframe::egui::mutex::Mutex;
 use httparse::{Request as ReqParser, Status};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::io::{prelude::*, BufReader};
-use std::net::{TcpListener, TcpStream};
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+
 use std::sync::{mpsc, Arc};
 
 use crate::edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair};
@@ -14,11 +16,6 @@ pub struct Server {
     host: String,
 }
 
-// TODO: because the server handles all requests on the same thread, its not possible to
-// process a request while another is in progress. This limits how we can handle setting `ctx.source_tape`
-// while waiting for a timecode feed to begin after a `/start` request is received. Ideally this
-// could be set while waiting.
-
 impl Server {
     pub fn new(port: &usize) -> Self {
         Server {
@@ -26,33 +23,41 @@ impl Server {
         }
     }
 
-    pub fn listen(
+    #[tokio::main]
+    pub async fn listen(
         &mut self,
         rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
         tx_serv_stopped: mpsc::Sender<()>,
         decode_handlers: DecodeHandlers,
         opt: Opt,
     ) -> Result<(), Error> {
-        let listener =
-            TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
-        let mut ctx = Context {
+        let listener = TcpListener::bind(&self.host)
+            .await
+            .context("Server could not initate TCP connection")?;
+        let ctx: Context = Arc::new(Mutex::new(ContextInner {
             frame_queue: FrameQueue::new(),
             rec_state: EdlRecordingState::Stopped,
             selected_src_tape: None,
+            decode_handlers: Arc::new(decode_handlers),
             edl: None,
-            decode_handlers,
             opt,
-        };
+        }));
 
         log::info!("Server launched and listening at {}", &self.host);
 
-        for stream in listener.incoming() {
-            self.handle_connection(stream?, &mut ctx)
-                .unwrap_or_else(|e| {
-                    log::error!("Request could not be sent: {:#}", e);
-                    StatusCode::S500
-                });
-
+        loop {
+            let (socket, _) = listener.accept().await.context("Unable to connect")?;
+            // A new task is spawned for each inbound socket. The socket is
+            // moved to the new task and processed there.
+            let ctx = Arc::clone(&ctx);
+            tokio::spawn(async move {
+                Server::handle_connection(socket, ctx)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::error!("Request could not be sent: {:#}", e);
+                        StatusCode::S500
+                    });
+            });
             match rx_stop_serv.lock().try_recv() {
                 Ok(_) => break,
                 Err(mpsc::TryRecvError::Empty) => continue,
@@ -65,26 +70,28 @@ impl Server {
         Ok(())
     }
 
-    fn handle_connection(
-        &mut self,
-        mut stream: TcpStream,
-        ctx: &mut Context,
+    async fn handle_connection(
+        mut socket: TcpStream,
+        mut ctx: Context,
     ) -> Result<StatusCode, Error> {
-        let mut buf_reader = BufReader::new(&mut stream);
+        let mut buf_reader = BufReader::new(&mut socket);
         let mut headers = [httparse::EMPTY_HEADER; 16];
 
-        let res: Response =
-            Request::new(&mut ReqParser::new(&mut headers), buf_reader.fill_buf()?)?
-                .route(ctx)
-                .unwrap_or_else(|e| {
-                    log::error!("Error processing request: {:#}", e);
-                    server_err()
-                })
-                .json()?;
+        let res: Response = Request::new(
+            &mut ReqParser::new(&mut headers),
+            buf_reader.fill_buf().await?,
+        )?
+        .route(&mut ctx)
+        .unwrap_or_else(|e| {
+            log::error!("Error processing request: {:#}", e);
+            server_err()
+        })
+        .json()?;
 
         let status = res.status;
-        stream.write_all(SerializedResponse::from(res).value.as_bytes())?;
-
+        socket
+            .write_all(SerializedResponse::from(res).value.as_bytes())
+            .await?;
         Ok(status)
     }
 }
@@ -97,9 +104,11 @@ enum StatusCode {
     S500,
 }
 
-pub struct Context {
+type Context = Arc<Mutex<ContextInner>>;
+
+pub struct ContextInner {
     frame_queue: FrameQueue,
-    decode_handlers: DecodeHandlers,
+    decode_handlers: Arc<DecodeHandlers>,
     edl: Option<Edl>,
     rec_state: EdlRecordingState,
     selected_src_tape: Option<String>,
@@ -176,14 +185,17 @@ impl<'req> Request<'req> {
     }
 
     fn handle_start(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        match &ctx.rec_state {
+        let mut ctx_guard = ctx.lock();
+        match ctx_guard.rec_state {
             EdlRecordingState::Stopped => {
-                ctx.decode_handlers.decode_on()?;
-                ctx.frame_queue.clear();
-                ctx.edl = Some(Edl::new(&ctx.opt)?);
+                ctx_guard.decode_handlers.decode_on()?;
+                ctx_guard.frame_queue.clear();
+                ctx_guard.edl = Some(Edl::new(&ctx_guard.opt)?);
+                // Drop the mutex lock before potentially long operations
+                drop(ctx_guard);
                 let mut response = self.body()?.expect_edit()?.wait_for_first_frame(ctx)?;
                 response.content = format!("Started decoding. {}", response.content);
-                ctx.rec_state = EdlRecordingState::Started;
+                ctx.lock().rec_state = EdlRecordingState::Started;
                 Ok(response)
             }
             EdlRecordingState::Started => {
@@ -192,20 +204,19 @@ impl<'req> Request<'req> {
                 Ok(Response::new(msg.into(), StatusCode::S404))
             }
         }
-        .or_else(|e| {
-            ctx.rec_state = EdlRecordingState::Stopped;
-            e
-        })
     }
 
     fn handle_end(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        match &ctx.rec_state {
+        let ctx_guard = ctx.lock();
+        match ctx_guard.rec_state {
             EdlRecordingState::Started => {
+                drop(ctx_guard);
                 let mut response = self.body()?.expect_edit()?.try_log_edit(ctx)?;
-                ctx.decode_handlers.decode_off()?;
+                let mut ctx_guard = ctx.lock();
+                ctx_guard.decode_handlers.decode_off()?;
                 log::info!("\nEnded recording.");
                 response.content = format!("Stopped decoding with {}", response.content);
-                ctx.rec_state = EdlRecordingState::Stopped;
+                ctx_guard.rec_state = EdlRecordingState::Stopped;
                 Ok(response)
             }
             EdlRecordingState::Stopped => {
@@ -213,16 +224,16 @@ impl<'req> Request<'req> {
                 log::warn!("{msg}");
                 Ok(Response::new(msg.into(), StatusCode::S404))
             }
-            .or_else(|e| {
-                ctx.rec_state = EdlRecordingState::Started;
-                e
-            }),
         }
     }
 
     fn handle_log(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        match &ctx.rec_state {
-            EdlRecordingState::Started => self.body()?.expect_edit()?.try_log_edit(ctx),
+        let ctx_guard = ctx.lock();
+        match ctx_guard.rec_state {
+            EdlRecordingState::Started => {
+                drop(ctx_guard);
+                self.body()?.expect_edit()?.try_log_edit(ctx)
+            }
             EdlRecordingState::Stopped => {
                 let msg = "Recording not yet started!";
                 log::warn!("{msg}");
@@ -298,50 +309,58 @@ pub struct EditRequestData {
 impl EditRequestData {
     fn try_log_edit(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match self.parse_edit_from_log(ctx) {
-            Ok(edit) => Ok(ctx
-                .edl
-                .as_mut()
-                .context("EDL file does not exist")?
-                .write_from_edit(edit)?
-                .into()),
+            Ok(edit) => {
+                let mut ctx_guard = ctx.lock();
+                Ok(ctx_guard
+                    .edl
+                    .as_mut()
+                    .context("EDL file does not exist")?
+                    .write_from_edit(edit)?
+                    .into())
+            }
             Err(DecodeErr::NoVal(_)) => Ok(frame_unavailable()),
             Err(e) => Err(Error::msg(e)),
         }
     }
 
     fn parse_edit_from_log(&mut self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
-        let tc = ctx.decode_handlers.try_recv_frame()?;
-        ctx.frame_queue.push(tc, self.map_selected_source(ctx)?)?;
-        let prev_record = ctx.frame_queue.pop().context("No value in frame_queue")?;
-        let curr_record = ctx.frame_queue.front().context("No value in frame_queue")?;
+        let tc = ctx.lock().decode_handlers.try_recv_frame()?;
+        let edit_data = self.map_selected_source(ctx);
+        let mut ctx_guard = ctx.lock();
+        ctx_guard.frame_queue.push(tc, edit_data)?;
+        let prev_record = ctx_guard
+            .frame_queue
+            .pop()
+            .context("No value in frame_queue")?;
+        let curr_record = ctx_guard
+            .frame_queue
+            .front()
+            .context("No value in frame_queue")?;
         Ok(Edit::try_from(FrameDataPair::new(
             &prev_record,
             curr_record,
         ))?)
     }
 
-    // TODO: we should be able to wait for timecode here as well as take /source-tape request, and
-    // defer checking validity of source_tape to `frame_queue.push`. Checking in `map_selected_source`
-    // before we wait for TC is a work around.
     fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        self.map_selected_source(ctx)?;
         log::info!("\nWaiting for timecode signal to start...");
-        let tc = match ctx.decode_handlers.recv_frame() {
+        let decode_handlers = Arc::clone(&ctx.lock().decode_handlers);
+        let tc = match decode_handlers.recv_frame() {
             Ok(f) => f,
             Err(DecodeErr::NoVal(_)) => return Ok("Exited".to_string().into()),
             Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
         };
-        ctx.frame_queue.push(tc, self)?;
+        let edit_data = self.map_selected_source(ctx);
+        ctx.lock().frame_queue.push(tc, edit_data)?;
         log::info!("Timecode signal detected and recording started.");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
     }
 
-    pub fn map_selected_source(&mut self, ctx: &Context) -> Result<&Self, Error> {
+    pub fn map_selected_source(&mut self, ctx: &Context) -> &Self {
         if self.source_tape.is_none() {
-            self.source_tape = ctx.selected_src_tape.clone().map(|tape| tape);
-            self.source_tape.as_ref().context("Source tape required")?;
+            self.source_tape = ctx.lock().selected_src_tape.clone();
         }
-        Ok(self)
+        self
     }
 }
 
@@ -352,7 +371,7 @@ pub struct SourceTapeRequestData {
 
 impl SourceTapeRequestData {
     fn try_select_src(&self, ctx: &mut Context) -> Result<Response, Error> {
-        ctx.selected_src_tape = Some(self.source_tape.clone());
+        ctx.lock().selected_src_tape = Some(self.source_tape.clone());
         let msg = format!("Source tape selected: {}", self.source_tape);
         log::info!("{msg}");
         Ok(msg.into())
