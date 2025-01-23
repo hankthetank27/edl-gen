@@ -152,13 +152,15 @@ impl App {
                         self.opt.ltc_host = Arc::new(host);
                         let LTCConfig {
                             ltc_device,
+                            ltc_devices,
                             input_channel,
                             buffer_size,
                             ..
-                        } = LTCConfig::default_no_device_list(
+                        } = LTCConfig::from_host(
                             Arc::clone(&self.opt.ltc_host),
                             Arc::clone(&self.opt.ltc_hosts),
                         );
+                        self.opt.ltc_devices = ltc_devices;
                         self.opt.ltc_device = ltc_device;
                         self.opt.input_channel = input_channel;
                         self.opt.buffer_size = buffer_size;
@@ -218,7 +220,7 @@ impl App {
                     input_channel,
                     buffer_size,
                     ..
-                } = LTCConfig::default_no_device_list(
+                } = LTCConfig::from_host_devices_excluded(
                     Arc::clone(&self.opt.ltc_host),
                     Arc::clone(&self.opt.ltc_hosts),
                 );
