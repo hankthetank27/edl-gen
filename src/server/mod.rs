@@ -14,6 +14,11 @@ pub struct Server {
     host: String,
 }
 
+// TODO: because the server handles all requests on the same thread, its not possible to
+// process a request while another is in progress. This limits how we can handle setting `ctx.source_tape`
+// while waiting for a timecode feed to begin after a `/start` request is received. Ideally this
+// could be set while waiting.
+
 impl Server {
     pub fn new(port: &usize) -> Self {
         Server {
@@ -33,6 +38,7 @@ impl Server {
         let mut ctx = Context {
             frame_queue: FrameQueue::new(),
             rec_state: EdlRecordingState::Stopped,
+            selected_src_tape: None,
             edl: None,
             decode_handlers,
             opt,
@@ -96,6 +102,7 @@ pub struct Context {
     decode_handlers: DecodeHandlers,
     edl: Option<Edl>,
     rec_state: EdlRecordingState,
+    selected_src_tape: Option<String>,
     opt: Opt,
 }
 
@@ -157,6 +164,7 @@ impl<'req> Request<'req> {
                 Some("/start") => self.handle_start(ctx),
                 Some("/end") => self.handle_end(ctx),
                 Some("/log") => self.handle_log(ctx),
+                Some("/select-src") => self.handle_select_src(ctx),
                 _ => Ok(not_found()),
             },
             Some("GET") => match self.path {
@@ -170,12 +178,12 @@ impl<'req> Request<'req> {
     fn handle_start(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match &ctx.rec_state {
             EdlRecordingState::Stopped => {
-                ctx.rec_state = EdlRecordingState::Started;
                 ctx.decode_handlers.decode_on()?;
                 ctx.frame_queue.clear();
                 ctx.edl = Some(Edl::new(&ctx.opt)?);
-                let mut response = self.body()?.wait_for_first_frame(ctx)?;
+                let mut response = self.body()?.expect_edit()?.wait_for_first_frame(ctx)?;
                 response.content = format!("Started decoding. {}", response.content);
+                ctx.rec_state = EdlRecordingState::Started;
                 Ok(response)
             }
             EdlRecordingState::Started => {
@@ -193,11 +201,11 @@ impl<'req> Request<'req> {
     fn handle_end(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match &ctx.rec_state {
             EdlRecordingState::Started => {
-                ctx.rec_state = EdlRecordingState::Stopped;
-                let mut response = self.body()?.try_log_edit(ctx)?;
+                let mut response = self.body()?.expect_edit()?.try_log_edit(ctx)?;
                 ctx.decode_handlers.decode_off()?;
                 log::info!("\nEnded recording.");
                 response.content = format!("Stopped decoding with {}", response.content);
+                ctx.rec_state = EdlRecordingState::Stopped;
                 Ok(response)
             }
             EdlRecordingState::Stopped => {
@@ -214,7 +222,7 @@ impl<'req> Request<'req> {
 
     fn handle_log(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match &ctx.rec_state {
-            EdlRecordingState::Started => self.body()?.try_log_edit(ctx),
+            EdlRecordingState::Started => self.body()?.expect_edit()?.try_log_edit(ctx),
             EdlRecordingState::Stopped => {
                 let msg = "Recording not yet started!";
                 log::warn!("{msg}");
@@ -223,7 +231,11 @@ impl<'req> Request<'req> {
         }
     }
 
-    fn body(&mut self) -> Result<EditRequestData, Error> {
+    fn handle_select_src(&mut self, ctx: &mut Context) -> Result<Response, Error> {
+        self.body()?.expect_source()?.try_select_src(ctx)
+    }
+
+    fn body(&mut self) -> Result<ReqBody, Error> {
         let body_length = self
             .headers
             .iter()
@@ -248,16 +260,43 @@ impl<'req> Request<'req> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReqBody {
+    Edit(EditRequestData),
+    Source(SourceTapeRequestData),
+}
+
+impl ReqBody {
+    fn expect_source(self) -> Result<SourceTapeRequestData, Error> {
+        match self {
+            ReqBody::Source(src) => Ok(src),
+            ReqBody::Edit(_) => Err(anyhow!(
+                "Unexpected request type: expected source, got edit"
+            )),
+        }
+    }
+
+    fn expect_edit(self) -> Result<EditRequestData, Error> {
+        match self {
+            ReqBody::Edit(src) => Ok(src),
+            ReqBody::Source(_) => Err(anyhow!(
+                "Unexpected request type: expected edit, got source"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EditRequestData {
     pub(crate) edit_type: String,
     pub(crate) edit_duration_frames: Option<u32>,
     pub(crate) wipe_num: Option<u32>,
-    pub(crate) source_tape: String,
+    pub(crate) source_tape: Option<String>,
     pub(crate) av_channels: AVChannels,
 }
 
 impl EditRequestData {
-    fn try_log_edit(&self, ctx: &mut Context) -> Result<Response, Error> {
+    fn try_log_edit(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match self.parse_edit_from_log(ctx) {
             Ok(edit) => Ok(ctx
                 .edl
@@ -270,9 +309,9 @@ impl EditRequestData {
         }
     }
 
-    fn parse_edit_from_log(&self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
+    fn parse_edit_from_log(&mut self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
         let tc = ctx.decode_handlers.try_recv_frame()?;
-        ctx.frame_queue.push(tc, self)?;
+        ctx.frame_queue.push(tc, self.map_selected_source(ctx)?)?;
         let prev_record = ctx.frame_queue.pop().context("No value in frame_queue")?;
         let curr_record = ctx.frame_queue.front().context("No value in frame_queue")?;
         Ok(Edit::try_from(FrameDataPair::new(
@@ -281,7 +320,11 @@ impl EditRequestData {
         ))?)
     }
 
-    fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
+    // TODO: we should be able to wait for timecode here as well as take /source-tape request, and
+    // defer checking validity of source_tape to `frame_queue.push`. Checking in `map_selected_source`
+    // before we wait for TC is a work around.
+    fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<Response, Error> {
+        self.map_selected_source(ctx)?;
         log::info!("\nWaiting for timecode signal to start...");
         let tc = match ctx.decode_handlers.recv_frame() {
             Ok(f) => f,
@@ -291,6 +334,28 @@ impl EditRequestData {
         ctx.frame_queue.push(tc, self)?;
         log::info!("Timecode signal detected and recording started.");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
+    }
+
+    pub fn map_selected_source(&mut self, ctx: &Context) -> Result<&Self, Error> {
+        if self.source_tape.is_none() {
+            self.source_tape = ctx.selected_src_tape.clone().map(|tape| tape);
+            self.source_tape.as_ref().context("Source tape required")?;
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SourceTapeRequestData {
+    source_tape: String,
+}
+
+impl SourceTapeRequestData {
+    fn try_select_src(&self, ctx: &mut Context) -> Result<Response, Error> {
+        ctx.selected_src_tape = Some(self.source_tape.clone());
+        let msg = format!("Source tape selected: {}", self.source_tape);
+        log::info!("{msg}");
+        Ok(msg.into())
     }
 }
 
