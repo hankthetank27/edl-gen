@@ -204,7 +204,7 @@ impl LTCConfig {
                         ltc_device: Some(ltc_device),
                     })
                     .unwrap_or_else(|| {
-                        let defaults = LTCConfig::from_host_devices_excluded(host, hosts);
+                        let defaults = LTCConfig::default_without_device_list(host, hosts);
                         defaults.ltc_device.write(&StoredOpts::LTCDevice);
                         defaults.buffer_size.write(&StoredOpts::BufferSize);
                         defaults.input_channel.write(&StoredOpts::InputChannel);
@@ -219,7 +219,7 @@ impl LTCConfig {
             })
     }
 
-    pub fn from_host_devices_excluded(
+    pub fn default_without_device_list(
         selected_host: Arc<cpal::Host>,
         available_hosts: Arc<Vec<cpal::HostId>>,
     ) -> Self {
@@ -238,18 +238,6 @@ impl LTCConfig {
             input_channel,
             buffer_size,
         }
-    }
-
-    pub fn from_host(
-        selected_host: Arc<cpal::Host>,
-        available_hosts: Arc<Vec<cpal::HostId>>,
-    ) -> Self {
-        let mut config = LTCConfig::from_host_devices_excluded(
-            Arc::clone(&selected_host),
-            Arc::clone(&available_hosts),
-        );
-        config.ltc_devices = LTCDevice::try_get_devices(&selected_host).ok();
-        config
     }
 }
 
