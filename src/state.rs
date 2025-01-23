@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::str;
 use std::sync::{Arc, LazyLock};
 
-use crate::edl::Ntsc;
-use crate::ltc_decode::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId};
+use crate::edl_writer::Ntsc;
+use crate::ltc_decoder::config::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId};
 
 static DB: LazyLock<Db> = LazyLock::new(Db::default);
 static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
@@ -405,15 +405,13 @@ pub struct Logger;
 
 impl Logger {
     pub fn init(ctx: &egui::Context) {
-        log::set_logger(&Logger)
+        if log::set_logger(&Logger)
             .ok()
             .map(|_| log::set_max_level(LevelFilter::Info))
-            .and_then(|_| {
-                // This can only ever be called once as log::set_logger returns an Error
-                // after the first call
-                *EGUI_CTX.lock() = ctx.clone();
-                Some(())
-            });
+            .is_some()
+        {
+            *EGUI_CTX.lock() = ctx.clone();
+        }
     }
 
     fn mut_log<F, T>(f: F) -> T

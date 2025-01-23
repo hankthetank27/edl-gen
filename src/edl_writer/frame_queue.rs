@@ -2,7 +2,7 @@ use anyhow::{anyhow, Error};
 use std::collections::VecDeque;
 use vtc::Timecode;
 
-use crate::edl::AVChannels;
+use crate::edl_writer::AVChannels;
 use crate::server::EditRequestData;
 
 // for tracking frame logs in queue.

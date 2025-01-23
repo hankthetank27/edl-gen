@@ -4,6 +4,9 @@
 // https://www.edlmax.com/EdlMaxHelp/Edl/maxguide.html
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
 // https://opentimelineio.readthedocs.io/en/latest/api/python/opentimelineio.adapters.cmx_3600.html
+//
+
+pub mod frame_queue;
 
 use anyhow::{anyhow, Context, Error};
 use serde::{Deserialize, Serialize};
@@ -13,7 +16,7 @@ use std::io::{BufWriter, Write};
 use vtc::Timecode;
 
 use crate::{
-    frame_queue::{EditType, FrameData},
+    edl_writer::frame_queue::{EditType, FrameData},
     state::Opt,
 };
 

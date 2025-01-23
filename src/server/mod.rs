@@ -6,9 +6,8 @@ use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{mpsc, Arc};
 
-use crate::edl::{AVChannels, Edit, Edl, FrameDataPair};
-use crate::frame_queue::FrameQueue;
-use crate::ltc_decode::{DecodeErr, DecodeHandlers};
+use crate::edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair};
+use crate::ltc_decoder::{DecodeErr, DecodeHandlers};
 use crate::state::Opt;
 
 pub struct Server {
