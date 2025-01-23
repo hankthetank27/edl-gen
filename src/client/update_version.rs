@@ -26,6 +26,7 @@ fn bump_is_greater(current: &str, latest: &str) -> Result<bool, Error> {
     Ok(Version::parse(latest)? > Version::parse(current)?)
 }
 
+#[allow(dead_code)]
 pub fn mac_conveyor_sparkle_check_update() -> Result<(), Error> {
     unsafe {
         let lib = Library::new("../Frameworks/libconveyor.dylib")
@@ -38,6 +39,7 @@ pub fn mac_conveyor_sparkle_check_update() -> Result<(), Error> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn windows_update_and_quit() {
     if Command::new("updatecheck.exe")
         .args(["--update-check"])

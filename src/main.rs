@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::{anyhow, Error};
-use edl_gen::{gui::App, state::Logger};
+use edl_gen::{client::interface::App, state::Logger};
 use eframe::egui::{self, FontData, FontDefinitions};
 use font_kit::{
     family_name::FamilyName, handle::Handle, properties::Properties, source::SystemSource,

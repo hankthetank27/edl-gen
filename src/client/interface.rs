@@ -9,13 +9,16 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
+use crate::edl_writer;
 use crate::{
-    edl,
-    ltc_decode::{LTCDevice, LTCHostId, LTCListener},
+    client::update_version,
+    ltc_decoder::{
+        config::{LTCDevice, LTCHostId},
+        LTCListener,
+    },
     server::Server,
-    single_val_channel,
     state::{Logger, Opt, StoredOpts},
-    update_version,
+    utils::single_val_channel,
 };
 
 pub struct App {
@@ -142,7 +145,7 @@ impl App {
             .selected_text(current_host_name.to_string())
             .show_ui(ui, |ui| {
                 for host_id in self.opt.ltc_hosts.iter() {
-                    let host = cpal::host_from_id(*host_id).unwrap(); //TODO: unrwrap
+                    let host: cpal::Host = LTCHostId::new(*host_id).into();
                     let host_name = host.id().get_name();
                     let checked = host_name == current_host_name;
                     let mut label = ui.selectable_label(checked, host_name);
@@ -313,14 +316,14 @@ impl App {
             .show_ui(ui, |ui| {
                 ui.selectable_value(
                     &mut self.opt.ntsc,
-                    edl::Ntsc::NonDropFrame,
-                    String::from(edl::Ntsc::NonDropFrame),
+                    edl_writer::Ntsc::NonDropFrame,
+                    String::from(edl_writer::Ntsc::NonDropFrame),
                 )
                 .write_on_change(&self.opt, StoredOpts::Ntsc);
                 ui.selectable_value(
                     &mut self.opt.ntsc,
-                    edl::Ntsc::DropFrame,
-                    String::from(edl::Ntsc::DropFrame),
+                    edl_writer::Ntsc::DropFrame,
+                    String::from(edl_writer::Ntsc::DropFrame),
                 )
                 .write_on_change(&self.opt, StoredOpts::Ntsc);
             });

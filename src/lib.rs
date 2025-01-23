@@ -1,8 +1,6 @@
-pub mod edl;
-pub mod frame_queue;
-pub mod gui;
-pub mod ltc_decode;
+pub mod client;
+pub mod edl_writer;
+pub mod ltc_decoder;
 pub mod server;
-pub mod single_val_channel;
 pub mod state;
-pub mod update_version;
+pub mod utils;
