@@ -332,7 +332,7 @@ impl App {
     }
 
     fn logger(&mut self, ui: &mut Ui) {
-        Logger::try_get_log(|logs| {
+        Logger::get_log(|logs| {
             let scroll = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .max_height(ui.available_height() - 2.0)

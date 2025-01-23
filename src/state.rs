@@ -1,12 +1,14 @@
 use anyhow::{Context, Error};
 use eframe::egui;
 use log::LevelFilter;
+use parking_lot::Mutex;
 use sled::IVec;
+use std::borrow::BorrowMut;
 use std::fs;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::str;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 
 use crate::edl::Ntsc;
 use crate::ltc_decode::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId};
@@ -409,32 +411,23 @@ impl Logger {
             .and_then(|_| {
                 // This can only ever be called once as log::set_logger returns an Error
                 // after the first call
-                EGUI_CTX
-                    .lock()
-                    .map(|mut dummy_ctx| *dummy_ctx = ctx.clone())
-                    .inspect_err(|e| eprintln!("Error: {}", e))
-                    .ok()
+                *EGUI_CTX.lock() = ctx.clone();
+                Some(())
             });
     }
 
-    fn try_mut_log<F, T>(f: F) -> Option<T>
+    fn mut_log<F, T>(f: F) -> T
     where
         F: FnOnce(&mut GlobalLog) -> T,
     {
-        match LOG.lock() {
-            Ok(ref mut global_log) => Some((f)(global_log)),
-            Err(_) => None,
-        }
+        (f)(LOG.lock().borrow_mut())
     }
 
-    pub fn try_get_log<F, T>(f: F) -> Option<T>
+    pub fn get_log<F, T>(f: F) -> T
     where
         F: FnOnce(&GlobalLog) -> T,
     {
-        match LOG.lock() {
-            Ok(ref global_log) => Some((f)(global_log)),
-            Err(_) => None,
-        }
+        (f)(LOG.lock().as_ref())
     }
 }
 
@@ -449,10 +442,8 @@ impl log::Log for Logger {
                 log::Level::Error => eprintln!("{}", record.args()),
                 _ => println!("{}", record.args()),
             };
-            Logger::try_mut_log(|logs| logs.push((record.level(), record.args().to_string())));
-            if let Ok(ctx) = EGUI_CTX.lock() {
-                ctx.request_repaint();
-            }
+            Logger::mut_log(|logs| logs.push((record.level(), record.args().to_string())));
+            EGUI_CTX.lock().request_repaint();
         }
     }
 
