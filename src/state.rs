@@ -1,15 +1,17 @@
 use anyhow::{Context, Error};
 use eframe::egui;
 use log::LevelFilter;
+use parking_lot::Mutex;
 use sled::IVec;
+use std::borrow::BorrowMut;
 use std::fs;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::str;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 
 use crate::edl::Ntsc;
-use crate::ltc_decode::{LTCConfig, LTCDevice};
+use crate::ltc_decode::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId};
 
 static DB: LazyLock<Db> = LazyLock::new(Db::default);
 static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
@@ -78,10 +80,15 @@ pub struct Opt {
     pub sample_rate: usize,
     pub fps: f32,
     pub ntsc: Ntsc,
+
+    // TODO: just take LTCConfg? we're just duplicating its structure + the arcs which we can just
+    // move to that type anways.
     pub buffer_size: Option<u32>,
     pub input_channel: Option<usize>,
     pub ltc_device: Option<LTCDevice>,
-    pub ltc_devices: Option<Vec<LTCDevice>>,
+    pub ltc_devices: Option<Vec<LTCDevice>>, // TODO: do we maybe want Arc here?
+    pub ltc_host: Arc<cpal::Host>,
+    pub ltc_hosts: Arc<Vec<cpal::HostId>>, // TODO: do we want actually need Arc here?
 }
 
 impl Opt {
@@ -117,6 +124,7 @@ impl Opt {
             device: StoredOpts::LTCDevice.try_into().ok(),
             buffer_size: StoredOpts::BufferSize.try_into().ok(),
             input_channel: StoredOpts::InputChannel.try_into().ok(),
+            host_id: StoredOpts::LTCHostId.try_into().ok(),
         }
     }
 }
@@ -128,6 +136,8 @@ impl Default for Opt {
             ltc_devices,
             input_channel,
             buffer_size,
+            ltc_host,
+            ltc_hosts,
         } = LTCConfig::from_serialized(Opt::default_ltc());
         Self {
             title: "my-video".into(),
@@ -140,14 +150,17 @@ impl Default for Opt {
             buffer_size,
             input_channel,
             ltc_device,
+            ltc_host,
+            ltc_hosts,
         }
     }
 }
 
 pub struct LTCSerializedConfg {
-    device: Option<String>,
-    buffer_size: Option<u32>,
-    input_channel: Option<usize>,
+    pub device: Option<LTCDeviceName>,
+    pub host_id: Option<LTCHostId>,
+    pub buffer_size: Option<u32>,
+    pub input_channel: Option<usize>,
 }
 
 impl LTCSerializedConfg {
@@ -155,7 +168,7 @@ impl LTCSerializedConfg {
         self.device.as_ref().and_then(|device_name| {
             devices
                 .iter()
-                .find(|device| device.name().as_ref() == Some(device_name))
+                .find(|device| device.name().as_ref() == Some(device_name.inner()))
                 .cloned()
         })
     }
@@ -218,6 +231,12 @@ impl Writer for Option<LTCDevice> {
     }
 }
 
+impl Writer for cpal::Host {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, <&str>::from(LTCHostId::new(self.id())))
+    }
+}
+
 impl Writer for Option<usize> {
     fn write(&self, key: &StoredOpts) -> Option<IVec> {
         DB.insert_from_opts(key, self.unwrap_or_default().to_string().as_bytes())
@@ -238,6 +257,7 @@ pub enum StoredOpts {
     Fps,
     Ntsc,
     LTCDevice,
+    LTCHostId,
     BufferSize,
     InputChannel,
 }
@@ -253,6 +273,7 @@ impl StoredOpts {
             StoredOpts::LTCDevice => &[5],
             StoredOpts::BufferSize => &[6],
             StoredOpts::InputChannel => &[7],
+            StoredOpts::LTCHostId => &[8],
         }
     }
 
@@ -264,6 +285,7 @@ impl StoredOpts {
             t @ StoredOpts::Fps => opt.fps.write(t),
             t @ StoredOpts::Ntsc => opt.ntsc.write(t),
             t @ StoredOpts::LTCDevice => opt.ltc_device.write(t),
+            t @ StoredOpts::LTCHostId => opt.ltc_host.write(t),
             t @ StoredOpts::BufferSize => opt.buffer_size.write(t),
             t @ StoredOpts::InputChannel => opt.input_channel.write(t),
         }
@@ -321,6 +343,25 @@ impl TryFrom<StoredOpts> for Ntsc {
     }
 }
 
+impl TryFrom<StoredOpts> for LTCDeviceName {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            Ok(LTCDeviceName::new(
+                String::from_utf8(val.to_vec()).context("Could not parse to utf8 String")?,
+            ))
+        })
+    }
+}
+
+impl TryFrom<StoredOpts> for LTCHostId {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts)
+            .and_then(|val| str::from_utf8(&val)?.try_into())
+    }
+}
+
 pub trait FindWithFallback {
     fn find_with_fallback<F>(&self, target: Self::Item, fallback: F) -> Option<Self::Item>
     where
@@ -370,32 +411,23 @@ impl Logger {
             .and_then(|_| {
                 // This can only ever be called once as log::set_logger returns an Error
                 // after the first call
-                EGUI_CTX
-                    .lock()
-                    .map(|mut dummy_ctx| *dummy_ctx = ctx.clone())
-                    .inspect_err(|e| eprintln!("Error: {}", e))
-                    .ok()
+                *EGUI_CTX.lock() = ctx.clone();
+                Some(())
             });
     }
 
-    fn try_mut_log<F, T>(f: F) -> Option<T>
+    fn mut_log<F, T>(f: F) -> T
     where
         F: FnOnce(&mut GlobalLog) -> T,
     {
-        match LOG.lock() {
-            Ok(ref mut global_log) => Some((f)(global_log)),
-            Err(_) => None,
-        }
+        (f)(LOG.lock().borrow_mut())
     }
 
-    pub fn try_get_log<F, T>(f: F) -> Option<T>
+    pub fn get_log<F, T>(f: F) -> T
     where
         F: FnOnce(&GlobalLog) -> T,
     {
-        match LOG.lock() {
-            Ok(ref global_log) => Some((f)(global_log)),
-            Err(_) => None,
-        }
+        (f)(LOG.lock().as_ref())
     }
 }
 
@@ -410,10 +442,8 @@ impl log::Log for Logger {
                 log::Level::Error => eprintln!("{}", record.args()),
                 _ => println!("{}", record.args()),
             };
-            Logger::try_mut_log(|logs| logs.push((record.level(), record.args().to_string())));
-            if let Ok(ctx) = EGUI_CTX.lock() {
-                ctx.request_repaint();
-            }
+            Logger::mut_log(|logs| logs.push((record.level(), record.args().to_string())));
+            EGUI_CTX.lock().request_repaint();
         }
     }
 

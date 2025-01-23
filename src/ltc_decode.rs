@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SupportedBufferSize};
+use cpal::{available_hosts, Device, SupportedBufferSize};
 use ltc::{LTCDecoder, LTCFrame};
 use num_traits::cast::AsPrimitive;
 use std::collections::VecDeque;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
@@ -15,26 +15,96 @@ use crate::{
 
 // const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
 
+#[derive(Clone, Copy)]
+pub struct LTCHostId(cpal::HostId);
+
+impl LTCHostId {
+    pub fn new(host: cpal::HostId) -> Self {
+        LTCHostId(host)
+    }
+}
+
+impl Default for LTCHostId {
+    fn default() -> Self {
+        LTCHostId(cpal::default_host().id())
+    }
+}
+
+impl From<LTCHostId> for cpal::Host {
+    fn from(host_id: LTCHostId) -> Self {
+        cpal::host_from_id(host_id.0).unwrap_or_else(|_| cpal::default_host())
+    }
+}
+
+impl From<LTCHostId> for &str {
+    fn from(host: LTCHostId) -> Self {
+        match host.0 {
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            cpal::HostId::CoreAudio => "CoreAudio",
+
+            #[cfg(target_os = "windows")]
+            cpal::HostId::Wasapi => "WASPAPI",
+            #[cfg(target_os = "windows")]
+            cpal::HostId::Asio => "ASIO",
+
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd"
+            ))]
+            cpal::HostId::Alsa => "ALSA",
+        }
+    }
+}
+
+impl TryFrom<&str> for LTCHostId {
+    type Error = Error;
+    fn try_from(host_str: &str) -> Result<Self, Self::Error> {
+        match host_str {
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            "CoreAudio" => Ok(cpal::HostId::CoreAudio),
+
+            #[cfg(target_os = "windows")]
+            "WASPAPI" => Ok(cpal::HostId::Wasapi),
+            #[cfg(target_os = "windows")]
+            "ASIO" => Ok(cpal::HostId::Asio),
+
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd"
+            ))]
+            "ALSA" => Ok(cpal::HostId::Alsa),
+
+            _ => Err(anyhow!("No host found")),
+        }
+        .map(LTCHostId::new)
+    }
+}
+
+#[derive(Clone)]
+pub struct LTCDeviceName(String);
+
+impl LTCDeviceName {
+    pub fn new(name: String) -> Self {
+        LTCDeviceName(name)
+    }
+
+    pub fn inner(&self) -> &String {
+        &self.0
+    }
+}
+
 #[derive(Clone)]
 pub struct LTCDevice {
     pub config: cpal::SupportedStreamConfig,
     pub device: cpal::Device,
 }
-
 impl LTCDevice {
-    fn default_host() -> cpal::Host {
-        #[allow(unused_mut)]
-        let mut host = cpal::default_host();
-        #[cfg(target_os = "windows")]
-        if let Ok(windows_host) = cpal::host_from_id(cpal::HostId::Asio) {
-            host = windows_host;
-        }
-        host
-    }
-
-    pub fn try_get_default() -> Result<Self, Error> {
-        LTCDevice::default_host()
-            .default_input_device()
+    pub fn try_get_default(host: &cpal::Host) -> Result<Self, Error> {
+        host.default_input_device()
             .context("failed to find input device")?
             .try_into()
     }
@@ -73,11 +143,8 @@ impl LTCDevice {
         (channels >= 1).then_some(1)
     }
 
-    pub fn try_get_devices() -> Result<Vec<LTCDevice>, Error> {
-        LTCDevice::default_host()
-            .input_devices()?
-            .map(LTCDevice::try_from)
-            .collect()
+    pub fn try_get_devices(host: &cpal::Host) -> Result<Vec<LTCDevice>, Error> {
+        host.input_devices()?.map(LTCDevice::try_from).collect()
     }
 
     pub fn match_buffer_or_default(&self, target: Option<u32>) -> Option<u32> {
@@ -105,8 +172,9 @@ impl TryFrom<Device> for LTCDevice {
     }
 }
 
-#[derive(Default)]
 pub struct LTCConfig {
+    pub ltc_host: Arc<cpal::Host>,
+    pub ltc_hosts: Arc<Vec<cpal::HostId>>,
     pub ltc_device: Option<LTCDevice>,
     pub ltc_devices: Option<Vec<LTCDevice>>,
     pub buffer_size: Option<u32>,
@@ -115,18 +183,28 @@ pub struct LTCConfig {
 
 impl LTCConfig {
     pub fn from_serialized(defaults: LTCSerializedConfg) -> Self {
-        LTCDevice::try_get_devices()
+        let host = Arc::new(
+            defaults
+                .host_id
+                .map(|id| id.into())
+                .unwrap_or_else(cpal::default_host),
+        );
+        let hosts = Arc::new(available_hosts());
+
+        LTCDevice::try_get_devices(&host)
             .map(|ltc_devices| {
                 let mut configs = defaults
                     .find_device_from(&ltc_devices)
                     .map(|ltc_device| LTCConfig {
+                        ltc_host: Arc::clone(&host),
+                        ltc_hosts: Arc::clone(&hosts),
                         ltc_devices: None,
                         buffer_size: defaults.find_buffer_from(&ltc_device),
                         input_channel: defaults.find_input_from(&ltc_device),
                         ltc_device: Some(ltc_device),
                     })
                     .unwrap_or_else(|| {
-                        let defaults = LTCConfig::default_no_device_list();
+                        let defaults = LTCConfig::default_without_device_list(host, hosts);
                         defaults.ltc_device.write(&StoredOpts::LTCDevice);
                         defaults.buffer_size.write(&StoredOpts::BufferSize);
                         defaults.input_channel.write(&StoredOpts::InputChannel);
@@ -141,8 +219,11 @@ impl LTCConfig {
             })
     }
 
-    pub fn default_no_device_list() -> Self {
-        let ltc_device = LTCDevice::try_get_default().ok();
+    pub fn default_without_device_list(
+        selected_host: Arc<cpal::Host>,
+        available_hosts: Arc<Vec<cpal::HostId>>,
+    ) -> Self {
+        let ltc_device = LTCDevice::try_get_default(&selected_host).ok();
         let input_channel = ltc_device
             .as_ref()
             .and_then(|device| device.get_default_channel(None));
@@ -150,10 +231,25 @@ impl LTCConfig {
             .as_ref()
             .and_then(|device| device.get_default_buffer_size(None));
         LTCConfig {
+            ltc_host: selected_host,
+            ltc_hosts: available_hosts,
             ltc_devices: None,
             ltc_device,
             input_channel,
             buffer_size,
+        }
+    }
+}
+
+impl Default for LTCConfig {
+    fn default() -> Self {
+        LTCConfig {
+            ltc_host: cpal::default_host().into(),
+            ltc_hosts: cpal::available_hosts().into(),
+            ltc_device: None,
+            ltc_devices: None,
+            buffer_size: None,
+            input_channel: None,
         }
     }
 }

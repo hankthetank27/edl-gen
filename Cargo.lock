@@ -1220,6 +1220,7 @@ dependencies = [
  "ltc",
  "minreq",
  "num-traits",
+ "parking_lot 0.12.3",
  "rfd",
  "semver",
  "serde",
