@@ -12,7 +12,7 @@ use std::thread::{self, JoinHandle};
 use crate::ltc_decode::LTCConfig;
 use crate::{
     edl,
-    ltc_decode::{LTCDevice, LTCListener},
+    ltc_decode::{LTCDevice, LTCHostId, LTCListener},
     server::Server,
     single_val_channel,
     state::{Logger, Opt, StoredOpts},
@@ -137,6 +137,42 @@ impl App {
         label.write_on_change(&self.opt, StoredOpts::Dir);
     }
 
+    fn config_driver_type(&mut self, ui: &mut Ui) {
+        let get_name = |host_id: cpal::HostId| <&str>::from(LTCHostId::new(host_id)).to_string();
+        let current_host_name = get_name(self.opt.ltc_host.id());
+        egui::ComboBox::from_label("Audio Driver")
+            .selected_text(current_host_name.to_string())
+            .show_ui(ui, |ui| {
+                for host_id in self.opt.ltc_hosts.iter() {
+                    let host = cpal::host_from_id(*host_id).unwrap(); //TODO: unrwrap
+                    let host_name = get_name(host.id());
+                    let checked = host_name == current_host_name;
+                    let mut label = ui.selectable_label(checked, host_name);
+                    if label.clicked() {
+                        self.opt.ltc_host = Arc::new(host);
+                        let LTCConfig {
+                            ltc_device,
+                            input_channel,
+                            buffer_size,
+                            ..
+                        } = LTCConfig::default_no_device_list(
+                            Arc::clone(&self.opt.ltc_host),
+                            Arc::clone(&self.opt.ltc_hosts),
+                        );
+                        self.opt.ltc_device = ltc_device;
+                        self.opt.input_channel = input_channel;
+                        self.opt.buffer_size = buffer_size;
+                        label.mark_changed();
+                    }
+                    label
+                        .write_on_change(&self.opt, StoredOpts::LTCHostId)
+                        .write_on_change(&self.opt, StoredOpts::LTCDevice)
+                        .write_on_change(&self.opt, StoredOpts::BufferSize)
+                        .write_on_change(&self.opt, StoredOpts::InputChannel);
+                }
+            });
+    }
+
     fn config_input_device(&mut self, ui: &mut Ui) {
         let get_name = |device: Option<&LTCDevice>| {
             device.map_or("No Device Found".to_string(), |d| {
@@ -172,7 +208,7 @@ impl App {
             });
     }
 
-    fn refresh_input_device(&mut self, ui: &mut Ui) {
+    fn refresh_input_devices(&mut self, ui: &mut Ui) {
         let mut button = ui.button("Refresh Devices");
         if button.clicked() {
             self.opt.ltc_devices = LTCDevice::try_get_devices(&self.opt.ltc_host).ok();
@@ -359,8 +395,10 @@ impl eframe::App for App {
                 ui.add_space(space);
                 ui.separator();
                 ui.add_space(space);
+                self.config_driver_type(ui);
+                ui.add_space(space);
                 self.config_input_device(ui);
-                self.refresh_input_device(ui);
+                self.refresh_input_devices(ui);
                 ui.add_space(space);
                 self.config_input_channel(ui);
                 ui.add_space(space);
