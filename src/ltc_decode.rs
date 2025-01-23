@@ -66,9 +66,9 @@ impl TryFrom<&str> for LTCHostId {
             "CoreAudio" => Ok(cpal::HostId::CoreAudio),
 
             #[cfg(target_os = "windows")]
-            "Wasapi" => cpal::HostId::Wasapi,
+            "Wasapi" => Ok(cpal::HostId::Wasapi),
             #[cfg(target_os = "windows")]
-            "Asio" => cpal::HostId::Asio,
+            "Asio" => Ok(cpal::HostId::Asio),
 
             #[cfg(any(
                 target_os = "linux",
@@ -76,7 +76,7 @@ impl TryFrom<&str> for LTCHostId {
                 target_os = "freebsd",
                 target_os = "netbsd"
             ))]
-            "Alsa" => cpal::HostId::Alsa,
+            "Alsa" => Ok(cpal::HostId::Alsa),
 
             _ => Err(anyhow!("No host found")),
         }
