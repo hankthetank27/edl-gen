@@ -3,15 +3,20 @@ use eframe::egui;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use sled::IVec;
-use std::borrow::BorrowMut;
-use std::fs;
-use std::ops::RangeInclusive;
-use std::path::PathBuf;
-use std::str;
-use std::sync::{Arc, LazyLock};
 
-use crate::edl_writer::Ntsc;
-use crate::ltc_decoder::config::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId};
+use std::{
+    borrow::BorrowMut,
+    fs,
+    ops::RangeInclusive,
+    path::PathBuf,
+    str,
+    sync::{Arc, LazyLock},
+};
+
+use crate::{
+    edl_writer::Ntsc,
+    ltc_decoder::config::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId},
+};
 
 static DB: LazyLock<Db> = LazyLock::new(Db::default);
 static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
@@ -73,6 +78,7 @@ impl Default for Db {
 }
 
 #[derive(Clone)]
+// TODO: We probably want to put this entire shared state object behind Arc<Mutex>
 pub struct Opt {
     pub title: String,
     pub dir: PathBuf,
@@ -86,8 +92,8 @@ pub struct Opt {
     pub buffer_size: Option<u32>,
     pub input_channel: Option<usize>,
     pub ltc_device: Option<LTCDevice>,
-    pub ltc_devices: Option<Vec<LTCDevice>>, // TODO: do we maybe want Arc here?
-    pub ltc_host: Arc<cpal::Host>,
+    pub ltc_devices: Option<Vec<LTCDevice>>,
+    pub ltc_host: Arc<cpal::Host>, // This needs to implement clone
     pub ltc_hosts: Arc<Vec<cpal::HostId>>, // TODO: do we want actually need Arc here?
 }
 

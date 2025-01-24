@@ -1,3 +1,4 @@
+// A channel which can only contain a single value at any given time, rather than a queue.
 use std::{
     error::Error,
     fmt,

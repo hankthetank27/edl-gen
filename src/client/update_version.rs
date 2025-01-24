@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Error};
 use libloading::{Library, Symbol};
 use semver::Version;
+
 use std::process::{self, Command};
 
 pub fn update_available() -> Result<bool, Error> {

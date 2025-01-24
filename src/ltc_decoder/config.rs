@@ -1,6 +1,10 @@
 use anyhow::{anyhow, Context, Error};
-use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{available_hosts, Device, SupportedBufferSize};
+use cpal::{
+    available_hosts,
+    traits::{DeviceTrait, HostTrait},
+    Device, SupportedBufferSize,
+};
+
 use std::sync::Arc;
 
 use crate::state::{FindWithFallback, LTCSerializedConfg, StoredOpts, Writer};

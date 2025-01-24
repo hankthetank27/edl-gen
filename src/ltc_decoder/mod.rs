@@ -4,10 +4,9 @@ use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use ltc::{LTCDecoder, LTCFrame};
 use num_traits::cast::AsPrimitive;
-use std::collections::VecDeque;
-use std::sync::mpsc;
-use std::thread;
 use vtc::{FramerateParseError, Timecode, TimecodeParseError};
+
+use std::{collections::VecDeque, sync::mpsc, thread};
 
 use crate::{
     ltc_decoder::config::LTCDevice,

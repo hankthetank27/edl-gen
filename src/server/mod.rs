@@ -3,14 +3,18 @@ use httparse::{Request as ReqParser, Status};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{TcpListener, TcpStream},
+};
 
 use std::sync::{mpsc, Arc};
 
-use crate::edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair};
-use crate::ltc_decoder::{DecodeErr, DecodeHandlers};
-use crate::state::Opt;
+use crate::{
+    edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair},
+    ltc_decoder::{DecodeErr, DecodeHandlers},
+    state::Opt,
+};
 
 pub struct Server {
     host: String,
