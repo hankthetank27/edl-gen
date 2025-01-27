@@ -5,9 +5,14 @@ use cpal::{
 };
 use hound;
 use itertools::Itertools;
+use parking_lot::Mutex;
 
 use std::{
-    cell::RefCell,
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc,
+    },
+    thread,
     time::{Duration, Instant},
     vec::IntoIter,
 };
@@ -23,6 +28,8 @@ pub struct MockDevice {
     pub supported_output_configs: Vec<SupportedStreamConfigRange>,
     pub stream_config: StreamConfig,
     pub opt_config: OptConfig,
+    pub tx_start_playing: Sender<()>,
+    pub rx_start_playing: Arc<Mutex<Receiver<()>>>,
 }
 
 impl MockDevice {
@@ -54,10 +61,13 @@ impl MockDevice {
 
 impl Default for MockDevice {
     fn default() -> Self {
+        let (tx_start_playing, rx_start_playing) = mpsc::channel::<()>();
         MockDevice {
             name: "TestDevice".to_string(),
             supported_input_configs: vec![MockDevice::mock_config_range()],
             supported_output_configs: vec![MockDevice::mock_config_range()],
+            rx_start_playing: Arc::new(Mutex::new(rx_start_playing)),
+            tx_start_playing,
             stream_config: StreamConfig {
                 channels: CHANNEL,
                 sample_rate: cpal::SampleRate(SAMPLE_RATE),
@@ -79,24 +89,24 @@ pub struct OptConfig {
 
 pub struct MockStream {
     pub ltc_wav_file_path: &'static str,
-    pub callback: RefCell<Box<dyn FnMut(&[i32], StreamInstant)>>,
-    pub start_time: Instant,
+    pub callback: Arc<Mutex<Box<dyn FnMut(&[i32], StreamInstant) + Send>>>,
+    pub rx_start_playing: Arc<Mutex<Receiver<()>>>,
 }
 
 impl MockStream {
-    fn new<F>(callback: F) -> Self
+    fn new<F>(rx_start_playing: &Arc<Mutex<Receiver<()>>>, callback: F) -> Self
     where
-        F: FnMut(&[i32], StreamInstant) + 'static,
+        F: FnMut(&[i32], StreamInstant) + Send + 'static,
     {
         MockStream {
             ltc_wav_file_path: "./assets/audio/LTC_01000000_1mins_30fps_44100x24.wav",
-            callback: RefCell::new(Box::new(callback)),
-            start_time: Instant::now(),
+            callback: Arc::new(Mutex::new(Box::new(callback))),
+            rx_start_playing: Arc::clone(&rx_start_playing),
         }
     }
 
-    fn next_timestamp(&self) -> StreamInstant {
-        let nanos = self.start_time.elapsed().as_nanos() as i64;
+    fn next_timestamp(timestamp: &Instant) -> StreamInstant {
+        let nanos = timestamp.elapsed().as_nanos() as i64;
         let secs = nanos / 1_000_000_000 as i64;
         let subsec_nanos = nanos - secs * 1_000_000_000;
         StreamInstant::new(secs, subsec_nanos as u32)
@@ -105,17 +115,23 @@ impl MockStream {
 
 impl StreamTrait for MockStream {
     fn play(&self) -> Result<(), cpal::PlayStreamError> {
+        let callback = self.callback.clone();
+        let rx_start_playing = self.rx_start_playing.clone();
         let mut reader =
-            hound::WavReader::open(self.ltc_wav_file_path).expect("Failed to open WAV file");
+            hound::WavReader::open(self.ltc_wav_file_path).expect("failed to open wav file");
         let sample_duration =
             Duration::from_secs_f32(BUFFER_SIZE as f32 / reader.spec().sample_rate as f32);
+        let start_time = Instant::now();
 
-        for samples in &reader.samples::<i32>().chunks(BUFFER_SIZE as usize) {
-            let sample: Vec<i32> = samples.map(|s| s.unwrap()).collect();
-            self.callback.borrow_mut()(&sample, self.next_timestamp());
-            // Simulate a delay based on the sample rate
-            std::thread::sleep(sample_duration);
-        }
+        thread::spawn(move || {
+            rx_start_playing.lock().recv().unwrap();
+            for samples in &reader.samples::<i32>().chunks(BUFFER_SIZE as usize) {
+                let sample: Vec<i32> = samples.map(|s| s.unwrap()).collect();
+                callback.lock()(&sample, MockStream::next_timestamp(&start_time));
+                // Simulate a delay based on the sample rate
+                std::thread::sleep(sample_duration);
+            }
+        });
         Ok(())
     }
 
@@ -141,16 +157,20 @@ impl DeviceTrait for MockDevice {
         D: FnMut(&[T], &cpal::InputCallbackInfo) + Send + 'static,
         E: FnMut(cpal::StreamError) + Send + 'static,
     {
-        Ok(MockStream::new(move |samples: &[i32], stream_instant| {
-            let input_timestamp = InputStreamTimestamp {
-                callback: stream_instant,
-                capture: stream_instant,
-            };
-            let callback_info = cpal::InputCallbackInfo::new(input_timestamp);
-            let converted_samples: &[T] =
-                unsafe { std::slice::from_raw_parts(samples.as_ptr() as *const T, samples.len()) };
-            data_callback(converted_samples, &callback_info);
-        }))
+        Ok(MockStream::new(
+            &self.rx_start_playing,
+            move |samples: &[i32], stream_instant| {
+                let input_timestamp = InputStreamTimestamp {
+                    callback: stream_instant,
+                    capture: stream_instant,
+                };
+                let callback_info = cpal::InputCallbackInfo::new(input_timestamp);
+                let converted_samples: &[T] = unsafe {
+                    std::slice::from_raw_parts(samples.as_ptr() as *const T, samples.len())
+                };
+                data_callback(converted_samples, &callback_info);
+            },
+        ))
     }
 
     fn name(&self) -> Result<String, cpal::DeviceNameError> {
@@ -188,7 +208,7 @@ impl DeviceTrait for MockDevice {
         D: FnMut(&cpal::Data, &cpal::InputCallbackInfo) + Send + 'static,
         E: FnMut(cpal::StreamError) + Send + 'static,
     {
-        Ok(MockStream::new(|_: &[i32], _| {}))
+        Ok(MockStream::new(&self.rx_start_playing, |_: &[i32], _| {}))
     }
     fn build_output_stream_raw<D, E>(
         &self,
@@ -202,6 +222,6 @@ impl DeviceTrait for MockDevice {
         D: FnMut(&mut cpal::Data, &cpal::OutputCallbackInfo) + Send + 'static,
         E: FnMut(cpal::StreamError) + Send + 'static,
     {
-        Ok(MockStream::new(|_: &[i32], _| {}))
+        Ok(MockStream::new(&self.rx_start_playing, |_: &[i32], _| {}))
     }
 }

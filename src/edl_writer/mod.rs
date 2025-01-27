@@ -50,7 +50,7 @@ impl Edl {
             };
         }
 
-        let mut file = BufWriter::new(File::create_new(path)?);
+        let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
         file.write_all(format!("FCM: {}\n", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
