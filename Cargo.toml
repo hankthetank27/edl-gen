@@ -12,7 +12,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.86"
-cpal = { git = "https://github.com/RustAudio/cpal.git", rev = "582e93c41d6073df5d5da871989c5fd581ea04b8" }
+cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde" }
 dirs = "5.0.1"
 eframe = "0.27.2"
 font-kit = "0.14.2"
@@ -32,7 +32,11 @@ tokio = {version = "1.43.0", features = ["net", "rt", "io-util", "macros", "rt-m
 vtc = "0.1.13"
 
 [target.'cfg(windows)'.dependencies]
-cpal = { git = "https://github.com/RustAudio/cpal.git", rev = "582e93c41d6073df5d5da871989c5fd581ea04b8", features = ["asio"] }
+cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde", features = ["asio"] }
+
+[dev-dependencies]
+hound = "3.4"
+itertools = "0.14.0"
 
 # https://github.com/bitshifter/mathbench-rs/issues/35
 # fixes nightly build

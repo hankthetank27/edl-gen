@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "asio-sys"
 version = "0.2.2"
-source = "git+https://github.com/RustAudio/cpal.git?rev=582e93c41d6073df5d5da871989c5fd581ea04b8#582e93c41d6073df5d5da871989c5fd581ea04b8"
+source = "git+https://github.com/hankthetank27/cpal.git?rev=40ed54d5941017ec1284a2e369a88db058ae7fde#40ed54d5941017ec1284a2e369a88db058ae7fde"
 dependencies = [
  "bindgen 0.69.5",
  "cc",
@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.15.3"
-source = "git+https://github.com/RustAudio/cpal.git?rev=582e93c41d6073df5d5da871989c5fd581ea04b8#582e93c41d6073df5d5da871989c5fd581ea04b8"
+source = "git+https://github.com/hankthetank27/cpal.git?rev=40ed54d5941017ec1284a2e369a88db058ae7fde#40ed54d5941017ec1284a2e369a88db058ae7fde"
 dependencies = [
  "alsa",
  "asio-sys",
@@ -1238,7 +1238,9 @@ dependencies = [
  "dirs",
  "eframe",
  "font-kit",
+ "hound",
  "httparse",
+ "itertools 0.14.0",
  "libloading 0.8.6",
  "log",
  "ltc",
@@ -1938,6 +1940,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "httparse"
 version = "1.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2150,6 +2158,15 @@ name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]

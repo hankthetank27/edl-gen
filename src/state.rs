@@ -6,7 +6,6 @@ use sled::IVec;
 
 use std::{
     borrow::BorrowMut,
-    fs,
     ops::RangeInclusive,
     path::PathBuf,
     str,
@@ -16,6 +15,7 @@ use std::{
 use crate::{
     edl_writer::Ntsc,
     ltc_decoder::config::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId},
+    utils::dirs as dir_utils,
 };
 
 static DB: LazyLock<Db> = LazyLock::new(Db::default);
@@ -45,15 +45,7 @@ impl Db {
 
     fn get_or_make_prefs_dir() -> Option<PathBuf> {
         let edl_prefs = dirs::preference_dir()?.join("edl-gen/");
-        if edl_prefs.exists()
-            || fs::create_dir_all(&edl_prefs)
-                .inspect_err(|e| eprintln!("Cloud not create directory: {}", e))
-                .is_ok()
-        {
-            Some(edl_prefs)
-        } else {
-            None
-        }
+        dir_utils::get_or_make_dir(edl_prefs).ok()
     }
 
     fn insert_from_opts<V: Into<IVec>>(&self, key: &StoredOpts, value: V) -> Option<IVec> {
@@ -93,7 +85,7 @@ pub struct Opt {
     pub input_channel: Option<usize>,
     pub ltc_device: Option<LTCDevice>,
     pub ltc_devices: Option<Vec<LTCDevice>>,
-    pub ltc_host: Arc<cpal::Host>, // This needs to implement clone
+    pub ltc_host: Arc<cpal::Host>, // Arc because cpal::Host doesn't implement clone
     pub ltc_hosts: Arc<Vec<cpal::HostId>>, // TODO: do we want actually need Arc here?
 }
 

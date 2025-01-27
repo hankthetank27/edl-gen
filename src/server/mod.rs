@@ -436,3 +436,81 @@ fn server_err() -> Response {
 fn not_found() -> Response {
     Response::new("Command not found".into(), StatusCode::S404)
 }
+
+#[cfg(test)]
+mod test {
+    use cpal::traits::DeviceTrait;
+    use eframe::egui::Context;
+    use parking_lot::Mutex;
+
+    use crate::{
+        edl_writer::Ntsc,
+        ltc_decoder::{config::LTCDevice, mock_device::MockDevice, LTCListener},
+        server::Server,
+        state::Logger,
+        state::Opt,
+        utils::dirs::get_or_make_dir,
+    };
+    use std::{
+        path::PathBuf,
+        sync::{mpsc, Arc},
+        thread,
+        time::Duration,
+    };
+
+    #[test]
+    fn test_audio() {
+        let device = MockDevice::default();
+
+        let ltc_device = LTCDevice {
+            config: device.default_output_config().unwrap(),
+            device: device.clone(),
+        };
+
+        let opt = Opt {
+            title: "test".to_string(),
+            dir: get_or_make_dir(PathBuf::from("../../test-output/")).unwrap(),
+            port: 6969,
+            sample_rate: 44_100,
+            fps: 30.0,
+            ntsc: Ntsc::DropFrame,
+            buffer_size: Some(device.clone().opt_config.buffer_size),
+            input_channel: Some(device.clone().opt_config.input_channel),
+            ltc_device: Some(ltc_device.clone()),
+            ltc_devices: Some(vec![ltc_device.clone()]),
+            ltc_host: Arc::new(cpal::default_host()),
+            ltc_hosts: Arc::new(cpal::available_hosts()),
+        };
+
+        Logger::init(&Context::default());
+
+        let decode_handlers = match LTCListener::new(opt.clone()) {
+            Ok(listener) => listener.listen(),
+            Err(e) => {
+                log::error!("{}", e);
+                return;
+            }
+        };
+        let (_tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
+        let (tx_serv_stopped, _rx_serv_stopped) = mpsc::channel::<()>();
+        let rx_stop_serv = Arc::new(Mutex::new(rx_stop_serv));
+
+        let _server_handle = thread::spawn(move || {
+            Server::new(&opt.port)
+                .listen(rx_stop_serv, tx_serv_stopped, decode_handlers, opt)
+                .unwrap();
+        });
+        thread::sleep(Duration::from_secs(1));
+        let res = minreq::post("http://127.0.0.1:6969/start")
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                r#"{ "edit_type": "cut", "source_tape": "clip1", "av_channels": { "video": true, "audio": 2 } }"#,
+            )
+            .send()
+            .unwrap();
+
+        println!("{:?}", res);
+        // server_handle.join().unwrap();
+        thread::sleep(Duration::from_secs(1));
+    }
+}

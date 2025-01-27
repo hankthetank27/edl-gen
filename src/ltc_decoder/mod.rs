@@ -1,3 +1,6 @@
+#[cfg(test)]
+pub(crate) mod mock_device;
+
 pub mod config;
 
 use anyhow::{anyhow, Context, Error};
@@ -9,7 +12,7 @@ use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 use std::{collections::VecDeque, sync::mpsc, thread};
 
 use crate::{
-    ltc_decoder::config::LTCDevice,
+    ltc_decoder::config::{Device, LTCDevice},
     state::Opt,
     utils::single_val_channel::{self, ChannelErr},
 };
@@ -18,7 +21,7 @@ use crate::{
 
 pub struct LTCListener {
     config: cpal::SupportedStreamConfig,
-    device: cpal::Device,
+    device: Device,
     input_channel: InputChannel,
     opt: Opt,
 }

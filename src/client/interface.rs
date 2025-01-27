@@ -17,7 +17,7 @@ use crate::{
     client::update_version,
     edl_writer,
     ltc_decoder::{
-        config::{LTCDevice, LTCHostId},
+        config::{DevicesFromHost, LTCDevice, LTCHostId},
         LTCListener,
     },
     server::Server,
