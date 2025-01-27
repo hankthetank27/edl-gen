@@ -1,14 +1,20 @@
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
-use eframe::egui::mutex::Mutex;
 use httparse::{Request as ReqParser, Status};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::io::{prelude::*, BufReader};
-use std::net::{TcpListener, TcpStream};
+
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{TcpListener, TcpStream},
+};
+
 use std::sync::{mpsc, Arc};
 
-use crate::edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair};
-use crate::ltc_decoder::{DecodeErr, DecodeHandlers};
-use crate::state::Opt;
+use crate::{
+    edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair},
+    ltc_decoder::{DecodeErr, DecodeHandlers},
+    state::Opt,
+};
 
 pub struct Server {
     host: String,
@@ -21,32 +27,41 @@ impl Server {
         }
     }
 
-    pub fn listen(
+    #[tokio::main]
+    pub async fn listen(
         &mut self,
         rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
         tx_serv_stopped: mpsc::Sender<()>,
         decode_handlers: DecodeHandlers,
         opt: Opt,
     ) -> Result<(), Error> {
-        let listener =
-            TcpListener::bind(&self.host).context("Server could not initate TCP connection")?;
-        let mut ctx = Context {
+        let listener = TcpListener::bind(&self.host)
+            .await
+            .context("Server could not initate TCP connection")?;
+        let ctx: Context = Arc::new(Mutex::new(ContextInner {
             frame_queue: FrameQueue::new(),
             rec_state: EdlRecordingState::Stopped,
+            selected_src_tape: None,
+            decode_handlers: Arc::new(decode_handlers),
             edl: None,
-            decode_handlers,
             opt,
-        };
+        }));
 
         log::info!("Server launched and listening at {}", &self.host);
 
-        for stream in listener.incoming() {
-            self.handle_connection(stream?, &mut ctx)
-                .unwrap_or_else(|e| {
-                    log::error!("Request could not be sent: {:#}", e);
-                    StatusCode::S500
-                });
-
+        loop {
+            let (socket, _) = listener.accept().await.context("Unable to connect")?;
+            // A new task is spawned for each inbound socket. The socket is
+            // moved to the new task and processed there.
+            let ctx = Arc::clone(&ctx);
+            tokio::spawn(async move {
+                Server::handle_connection(socket, ctx)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::error!("Request could not be sent: {:#}", e);
+                        StatusCode::S500
+                    });
+            });
             match rx_stop_serv.lock().try_recv() {
                 Ok(_) => break,
                 Err(mpsc::TryRecvError::Empty) => continue,
@@ -59,26 +74,28 @@ impl Server {
         Ok(())
     }
 
-    fn handle_connection(
-        &mut self,
-        mut stream: TcpStream,
-        ctx: &mut Context,
+    async fn handle_connection(
+        mut socket: TcpStream,
+        mut ctx: Context,
     ) -> Result<StatusCode, Error> {
-        let mut buf_reader = BufReader::new(&mut stream);
+        let mut buf_reader = BufReader::new(&mut socket);
         let mut headers = [httparse::EMPTY_HEADER; 16];
 
-        let res: Response =
-            Request::new(&mut ReqParser::new(&mut headers), buf_reader.fill_buf()?)?
-                .route(ctx)
-                .unwrap_or_else(|e| {
-                    log::error!("Error processing request: {:#}", e);
-                    server_err()
-                })
-                .json()?;
+        let res: Response = Request::new(
+            &mut ReqParser::new(&mut headers),
+            buf_reader.fill_buf().await?,
+        )?
+        .route(&mut ctx)
+        .unwrap_or_else(|e| {
+            log::error!("Error processing request: {:#}", e);
+            server_err()
+        })
+        .json()?;
 
         let status = res.status;
-        stream.write_all(SerializedResponse::from(res).value.as_bytes())?;
-
+        socket
+            .write_all(SerializedResponse::from(res).value.as_bytes())
+            .await?;
         Ok(status)
     }
 }
@@ -91,11 +108,14 @@ enum StatusCode {
     S500,
 }
 
-pub struct Context {
+type Context = Arc<Mutex<ContextInner>>;
+
+pub struct ContextInner {
     frame_queue: FrameQueue,
-    decode_handlers: DecodeHandlers,
+    decode_handlers: Arc<DecodeHandlers>,
     edl: Option<Edl>,
     rec_state: EdlRecordingState,
+    selected_src_tape: Option<String>,
     opt: Opt,
 }
 
@@ -157,6 +177,7 @@ impl<'req> Request<'req> {
                 Some("/start") => self.handle_start(ctx),
                 Some("/end") => self.handle_end(ctx),
                 Some("/log") => self.handle_log(ctx),
+                Some("/select-src") => self.handle_select_src(ctx),
                 _ => Ok(not_found()),
             },
             Some("GET") => match self.path {
@@ -168,14 +189,17 @@ impl<'req> Request<'req> {
     }
 
     fn handle_start(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        match &ctx.rec_state {
+        let mut ctx_guard = ctx.lock();
+        match ctx_guard.rec_state {
             EdlRecordingState::Stopped => {
-                ctx.rec_state = EdlRecordingState::Started;
-                ctx.decode_handlers.decode_on()?;
-                ctx.frame_queue.clear();
-                ctx.edl = Some(Edl::new(&ctx.opt)?);
-                let mut response = self.body()?.wait_for_first_frame(ctx)?;
+                ctx_guard.decode_handlers.decode_on()?;
+                ctx_guard.frame_queue.clear();
+                ctx_guard.edl = Some(Edl::new(&ctx_guard.opt)?);
+                // Drop the mutex lock before potentially long operations
+                drop(ctx_guard);
+                let mut response = self.body()?.expect_edit()?.wait_for_first_frame(ctx)?;
                 response.content = format!("Started decoding. {}", response.content);
+                ctx.lock().rec_state = EdlRecordingState::Started;
                 Ok(response)
             }
             EdlRecordingState::Started => {
@@ -184,20 +208,19 @@ impl<'req> Request<'req> {
                 Ok(Response::new(msg.into(), StatusCode::S404))
             }
         }
-        .or_else(|e| {
-            ctx.rec_state = EdlRecordingState::Stopped;
-            e
-        })
     }
 
     fn handle_end(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        match &ctx.rec_state {
+        let ctx_guard = ctx.lock();
+        match ctx_guard.rec_state {
             EdlRecordingState::Started => {
-                ctx.rec_state = EdlRecordingState::Stopped;
-                let mut response = self.body()?.try_log_edit(ctx)?;
-                ctx.decode_handlers.decode_off()?;
+                drop(ctx_guard);
+                let mut response = self.body()?.expect_edit()?.try_log_edit(ctx)?;
+                let mut ctx_guard = ctx.lock();
+                ctx_guard.decode_handlers.decode_off()?;
                 log::info!("\nEnded recording.");
                 response.content = format!("Stopped decoding with {}", response.content);
+                ctx_guard.rec_state = EdlRecordingState::Stopped;
                 Ok(response)
             }
             EdlRecordingState::Stopped => {
@@ -205,16 +228,16 @@ impl<'req> Request<'req> {
                 log::warn!("{msg}");
                 Ok(Response::new(msg.into(), StatusCode::S404))
             }
-            .or_else(|e| {
-                ctx.rec_state = EdlRecordingState::Started;
-                e
-            }),
         }
     }
 
     fn handle_log(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        match &ctx.rec_state {
-            EdlRecordingState::Started => self.body()?.try_log_edit(ctx),
+        let ctx_guard = ctx.lock();
+        match ctx_guard.rec_state {
+            EdlRecordingState::Started => {
+                drop(ctx_guard);
+                self.body()?.expect_edit()?.try_log_edit(ctx)
+            }
             EdlRecordingState::Stopped => {
                 let msg = "Recording not yet started!";
                 log::warn!("{msg}");
@@ -223,7 +246,11 @@ impl<'req> Request<'req> {
         }
     }
 
-    fn body(&mut self) -> Result<EditRequestData, Error> {
+    fn handle_select_src(&mut self, ctx: &mut Context) -> Result<Response, Error> {
+        self.body()?.expect_source()?.try_select_src(ctx)
+    }
+
+    fn body(&mut self) -> Result<ReqBody, Error> {
         let body_length = self
             .headers
             .iter()
@@ -248,49 +275,110 @@ impl<'req> Request<'req> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReqBody {
+    Edit(EditRequestData),
+    Source(SourceTapeRequestData),
+}
+
+impl ReqBody {
+    fn expect_source(self) -> Result<SourceTapeRequestData, Error> {
+        match self {
+            ReqBody::Source(src) => Ok(src),
+            ReqBody::Edit(_) => Err(anyhow!(
+                "Unexpected request type: expected source, got edit"
+            )),
+        }
+    }
+
+    fn expect_edit(self) -> Result<EditRequestData, Error> {
+        match self {
+            ReqBody::Edit(src) => Ok(src),
+            ReqBody::Source(_) => Err(anyhow!(
+                "Unexpected request type: expected edit, got source"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EditRequestData {
     pub(crate) edit_type: String,
     pub(crate) edit_duration_frames: Option<u32>,
     pub(crate) wipe_num: Option<u32>,
-    pub(crate) source_tape: String,
+    pub(crate) source_tape: Option<String>,
     pub(crate) av_channels: AVChannels,
 }
 
 impl EditRequestData {
-    fn try_log_edit(&self, ctx: &mut Context) -> Result<Response, Error> {
+    fn try_log_edit(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match self.parse_edit_from_log(ctx) {
-            Ok(edit) => Ok(ctx
-                .edl
-                .as_mut()
-                .context("EDL file does not exist")?
-                .write_from_edit(edit)?
-                .into()),
+            Ok(edit) => {
+                let mut ctx_guard = ctx.lock();
+                Ok(ctx_guard
+                    .edl
+                    .as_mut()
+                    .context("EDL file does not exist")?
+                    .write_from_edit(edit)?
+                    .into())
+            }
             Err(DecodeErr::NoVal(_)) => Ok(frame_unavailable()),
             Err(e) => Err(Error::msg(e)),
         }
     }
 
-    fn parse_edit_from_log(&self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
-        let tc = ctx.decode_handlers.try_recv_frame()?;
-        ctx.frame_queue.push(tc, self)?;
-        let prev_record = ctx.frame_queue.pop().context("No value in frame_queue")?;
-        let curr_record = ctx.frame_queue.front().context("No value in frame_queue")?;
+    fn parse_edit_from_log(&mut self, ctx: &mut Context) -> Result<Edit, DecodeErr> {
+        let tc = ctx.lock().decode_handlers.try_recv_frame()?;
+        let edit_data = self.map_selected_source(ctx);
+        let mut ctx_guard = ctx.lock();
+        ctx_guard.frame_queue.push(tc, edit_data)?;
+        let prev_record = ctx_guard
+            .frame_queue
+            .pop()
+            .context("No value in frame_queue")?;
+        let curr_record = ctx_guard
+            .frame_queue
+            .front()
+            .context("No value in frame_queue")?;
         Ok(Edit::try_from(FrameDataPair::new(
             &prev_record,
             curr_record,
         ))?)
     }
 
-    fn wait_for_first_frame(&self, ctx: &mut Context) -> Result<Response, Error> {
+    fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         log::info!("\nWaiting for timecode signal to start...");
-        let tc = match ctx.decode_handlers.recv_frame() {
+        let decode_handlers = Arc::clone(&ctx.lock().decode_handlers);
+        let tc = match decode_handlers.recv_frame() {
             Ok(f) => f,
             Err(DecodeErr::NoVal(_)) => return Ok("Exited".to_string().into()),
             Err(DecodeErr::Anyhow(e)) => return Err(anyhow!(e)),
         };
-        ctx.frame_queue.push(tc, self)?;
+        let edit_data = self.map_selected_source(ctx);
+        ctx.lock().frame_queue.push(tc, edit_data)?;
         log::info!("Timecode signal detected and recording started.");
         Ok(format!("timecode logged: {:#?}", tc.timecode()).into())
+    }
+
+    pub fn map_selected_source(&mut self, ctx: &Context) -> &Self {
+        if self.source_tape.is_none() {
+            self.source_tape = ctx.lock().selected_src_tape.clone();
+        }
+        self
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SourceTapeRequestData {
+    source_tape: String,
+}
+
+impl SourceTapeRequestData {
+    fn try_select_src(&self, ctx: &mut Context) -> Result<Response, Error> {
+        ctx.lock().selected_src_tape = Some(self.source_tape.clone());
+        let msg = format!("Source tape selected: {}", self.source_tape);
+        log::info!("{msg}");
+        Ok(msg.into())
     }
 }
 
@@ -312,7 +400,7 @@ impl From<Response> for SerializedResponse {
 
         SerializedResponse {
             value: format!(
-                "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{content}"
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{content}"
             ),
         }
     }
@@ -347,4 +435,296 @@ fn server_err() -> Response {
 
 fn not_found() -> Response {
     Response::new("Command not found".into(), StatusCode::S404)
+}
+
+#[cfg(test)]
+mod test {
+    use eframe::egui::Context;
+    use parking_lot::Mutex;
+
+    use crate::{
+        edl_writer::AVChannels,
+        ltc_decoder::LTCListener,
+        server::{EditRequestData, Server, SourceTapeRequestData},
+        state::Logger,
+        test::state::test_opt,
+    };
+    use std::{
+        sync::{mpsc, Arc},
+        thread,
+        time::Duration,
+    };
+
+    struct TestServer {
+        port: usize,
+        tx_stop_serv: mpsc::Sender<()>,
+    }
+
+    impl TestServer {
+        fn new(port: usize, file_name: String) -> Self {
+            let opt = test_opt(port, file_name);
+
+            Logger::init(&Context::default());
+
+            let decode_handlers = LTCListener::new(opt.clone()).unwrap().listen();
+            let (tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
+            let (tx_serv_stopped, _rx_serv_stopped) = mpsc::channel::<()>();
+            let rx_stop_serv = Arc::new(Mutex::new(rx_stop_serv));
+
+            thread::spawn(move || {
+                Server::new(&opt.port)
+                    .listen(rx_stop_serv, tx_serv_stopped, decode_handlers, opt)
+                    .unwrap();
+            });
+            thread::sleep(Duration::from_millis(300));
+
+            Self { port, tx_stop_serv }
+        }
+    }
+
+    #[test]
+    fn test_edit_events() {
+        let TestServer { port, tx_stop_serv } =
+            TestServer::new(6670, "test_edit_events".to_string());
+
+        let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let cut_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape2".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let cut_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let wipe_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "wipe".into(),
+                    edit_duration_frames: Some(2),
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let dis_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "dissolve".into(),
+                    edit_duration_frames: Some(2),
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let end_res = minreq::post(format!("http://127.0.0.1:{port}/end"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "dissolve".into(),
+                    edit_duration_frames: Some(2),
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+
+        assert_eq!(start_res.status_code, 200);
+        assert_eq!(cut_1_res.status_code, 200);
+        assert_eq!(cut_2_res.status_code, 200);
+        assert_eq!(wipe_1_res.status_code, 200);
+        assert_eq!(dis_1_res.status_code, 200);
+        assert_eq!(end_res.status_code, 200);
+
+        tx_stop_serv.send(()).unwrap();
+    }
+
+    #[test]
+    fn test_edit_events_with_preselected_src() {
+        let TestServer { port, tx_stop_serv } =
+            TestServer::new(7891, "test_edit_events_with_preselected_src".to_string());
+
+        let src_res = minreq::post(format!("http://127.0.0.1:{port}/select-src"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&SourceTapeRequestData {
+                    source_tape: "tape1".into(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let cut_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape2".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let cut_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+
+        assert_eq!(src_res.status_code, 200);
+        assert_eq!(start_res.status_code, 200);
+        assert_eq!(cut_1_res.status_code, 200);
+        assert_eq!(cut_2_res.status_code, 200);
+
+        tx_stop_serv.send(()).unwrap();
+    }
+
+    #[test]
+    fn test_event_failtures() {
+        let TestServer { port, tx_stop_serv } =
+            TestServer::new(7910, "test_event_failtures".to_string());
+
+        let cut_first = minreq::post(format!("http://127.0.0.1:{port}/cut"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let start_before_src = minreq::post(format!("http://127.0.0.1:{port}/start"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        minreq::post(format!("http://127.0.0.1:{port}/select-src"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&SourceTapeRequestData {
+                    source_tape: "tape1".into(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let end_before_start = minreq::post(format!("http://127.0.0.1:{port}/end"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let cut_before_start = minreq::post(format!("http://127.0.0.1:{port}/cut"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: Some("tape1".into()),
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+
+        assert_eq!(cut_first.status_code, 404);
+        assert_eq!(start_before_src.status_code, 500);
+        assert_eq!(end_before_start.status_code, 404);
+        assert_eq!(cut_before_start.status_code, 404);
+
+        tx_stop_serv.send(()).unwrap();
+    }
 }

@@ -1,9 +1,13 @@
-use anyhow::{anyhow, Context, Error};
-use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{available_hosts, Device, SupportedBufferSize};
+use anyhow::{anyhow, Error};
+use cpal::{self, available_hosts, traits::DeviceTrait, SupportedBufferSize};
 use std::sync::Arc;
 
 use crate::state::{FindWithFallback, LTCSerializedConfg, StoredOpts, Writer};
+
+#[cfg(not(test))]
+pub type Device = cpal::Device;
+#[cfg(test)]
+pub type Device = crate::test::cpal_device::MockDevice;
 
 // const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
 #[derive(Clone, Copy)]
@@ -91,15 +95,10 @@ impl LTCDeviceName {
 #[derive(Clone)]
 pub struct LTCDevice {
     pub config: cpal::SupportedStreamConfig,
-    pub device: cpal::Device,
+    pub device: Device,
 }
-impl LTCDevice {
-    pub fn try_get_default(host: &cpal::Host) -> Result<Self, Error> {
-        host.default_input_device()
-            .context("failed to find input device")?
-            .try_into()
-    }
 
+impl LTCDevice {
     pub fn get_buffer_opts(&self) -> Option<Vec<u32>> {
         let (min, max) = match self.config.buffer_size() {
             SupportedBufferSize::Unknown => None,
@@ -134,10 +133,6 @@ impl LTCDevice {
         (channels >= 1).then_some(1)
     }
 
-    pub fn try_get_devices(host: &cpal::Host) -> Result<Vec<LTCDevice>, Error> {
-        host.input_devices()?.map(LTCDevice::try_from).collect()
-    }
-
     pub fn match_buffer_or_default(&self, target: Option<u32>) -> Option<u32> {
         let buffers = self.get_buffer_opts()?;
         buffers.find_with_fallback(target?, || self.get_default_buffer_size(Some(&buffers)))
@@ -153,12 +148,45 @@ impl LTCDevice {
     }
 }
 
+pub trait DevicesFromHost {
+    fn try_get_default(host: &cpal::Host) -> Result<LTCDevice, Error>;
+    fn try_get_devices(host: &cpal::Host) -> Result<Vec<LTCDevice>, Error>;
+}
+
+#[cfg(not(test))]
+impl DevicesFromHost for LTCDevice {
+    fn try_get_default(host: &cpal::Host) -> Result<Self, Error> {
+        use anyhow::Context;
+        use cpal::traits::HostTrait;
+        host.default_input_device()
+            .context("failed to find input device")?
+            .try_into()
+    }
+
+    fn try_get_devices(host: &cpal::Host) -> Result<Vec<LTCDevice>, Error> {
+        use cpal::traits::HostTrait;
+        host.input_devices()?.map(LTCDevice::try_from).collect()
+    }
+}
+
+#[cfg(test)]
+impl DevicesFromHost for LTCDevice {
+    fn try_get_default(_host: &cpal::Host) -> Result<Self, Error> {
+        Device::default().try_into()
+    }
+
+    fn try_get_devices(_host: &cpal::Host) -> Result<Vec<LTCDevice>, Error> {
+        vec![Device::default()]
+            .into_iter()
+            .map(LTCDevice::try_from)
+            .collect()
+    }
+}
+
 impl TryFrom<Device> for LTCDevice {
     type Error = Error;
     fn try_from(device: Device) -> Result<Self, Self::Error> {
-        let config = device
-            .default_input_config()
-            .context("Failed to get default input config")?;
+        let config = device.default_input_config()?;
         Ok(LTCDevice { device, config })
     }
 }

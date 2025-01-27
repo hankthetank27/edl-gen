@@ -3,15 +3,20 @@ use eframe::egui;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use sled::IVec;
-use std::borrow::BorrowMut;
-use std::fs;
-use std::ops::RangeInclusive;
-use std::path::PathBuf;
-use std::str;
-use std::sync::{Arc, LazyLock};
 
-use crate::edl_writer::Ntsc;
-use crate::ltc_decoder::config::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId};
+use std::{
+    borrow::BorrowMut,
+    ops::RangeInclusive,
+    path::PathBuf,
+    str,
+    sync::{Arc, LazyLock},
+};
+
+use crate::{
+    edl_writer::Ntsc,
+    ltc_decoder::config::{LTCConfig, LTCDevice, LTCDeviceName, LTCHostId},
+    utils::dirs as dir_utils,
+};
 
 static DB: LazyLock<Db> = LazyLock::new(Db::default);
 static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
@@ -40,15 +45,7 @@ impl Db {
 
     fn get_or_make_prefs_dir() -> Option<PathBuf> {
         let edl_prefs = dirs::preference_dir()?.join("edl-gen/");
-        if edl_prefs.exists()
-            || fs::create_dir_all(&edl_prefs)
-                .inspect_err(|e| eprintln!("Cloud not create directory: {}", e))
-                .is_ok()
-        {
-            Some(edl_prefs)
-        } else {
-            None
-        }
+        dir_utils::get_or_make_dir(edl_prefs).ok()
     }
 
     fn insert_from_opts<V: Into<IVec>>(&self, key: &StoredOpts, value: V) -> Option<IVec> {
@@ -73,6 +70,7 @@ impl Default for Db {
 }
 
 #[derive(Clone)]
+// TODO: We probably want to put this entire shared state object behind Arc<Mutex>
 pub struct Opt {
     pub title: String,
     pub dir: PathBuf,
@@ -86,8 +84,8 @@ pub struct Opt {
     pub buffer_size: Option<u32>,
     pub input_channel: Option<usize>,
     pub ltc_device: Option<LTCDevice>,
-    pub ltc_devices: Option<Vec<LTCDevice>>, // TODO: do we maybe want Arc here?
-    pub ltc_host: Arc<cpal::Host>,
+    pub ltc_devices: Option<Vec<LTCDevice>>,
+    pub ltc_host: Arc<cpal::Host>, // Arc because cpal::Host doesn't implement clone
     pub ltc_hosts: Arc<Vec<cpal::HostId>>, // TODO: do we want actually need Arc here?
 }
 

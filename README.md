@@ -16,9 +16,9 @@ Make sure you have the [Rust Toolchain](https://www.rust-lang.org/tools/install)
 
 Windows builds use ASIO drivers with [cpal](https://github.com/RustAudio/cpal). Setup instructions can be found [here](https://github.com/RustAudio/cpal?tab=readme-ov-file#asio-on-windows).
 
-## Usage ##
+## Usage
 
-### Overview ###
+### Overview
 
 EGLgen works by listening to an LTC/SMPTE timecode source signal via an audio device while also listening for edit events via an HTTP server over a local network. 
 
@@ -29,7 +29,7 @@ EDLgen's output EDL conforms to the [CMX3600 specification](https://www.edlmax.c
 Edit events in are received the form of HTTP requests made to the configured port, and should contain a payload specifying event data such as edit type and tape number (more detailed event API docs can be found below). When the EDLgen server receives an event request, it will write the edit data as described in the event request payload to an EDL file with the given project name.
 
 
-### Configuration and Controls ###
+### Configuration and Controls
 
 - **Project Name**: Sets the name of the EDL file that will be written to after the first `START` event is received. EDLgen will never overwrite an existing EDL with the same name as the given project name in the same storage directory. Rather, it will append a number to the end of the file name. Ex. `my-video.edl` would be written as `my-video(1).edl` if a file of that name already existed.
 
@@ -55,13 +55,21 @@ Edit events in are received the form of HTTP requests made to the configured por
 
 - **Stop Server**: Closes the server if already launched, allowing you to reconfigure your settings. 
 
-### Triggering Edit Events / API ###
+### Triggering Edit Events / API
 
 The event trigger API describes how the EDLgen server expects to receive events, and what type of metadata the events and ingest and log. 
 
 To trigger an edit event, an HTTP POST request must be sent to the configured TCP port number, with a JSON payload containing the event metadata. For instance if you configured your port to be 9000, over your local network you would ping `127.0.0.1:9000/{even_name_here}`.
 
-#### JSON Payload ####
+#### Edit Events
+
+- **START** - POST to `127.0.0.1:{port_num}/start` - Triggers the creation of a new EDL file, the initialization of the LTC timecode decoding process, and the first edit log in the EDL. If there is no timecode signal present, the event will wait until a signal is detected before proceeding with logging, meaning you can trigger a start event before you actually start playback of your source. No subsequent events can be triggered until a **START** event has been received.
+
+- **LOG** - POST to `127.0.0.1:{port_num}/log` - Triggers the logging of an edit once the EDL has been created and the LTC is decoding after a **START** event as been received. This will likely be the most used event type unless you plan on logging a single edit. 
+
+- **END** - POST to `127.0.0.1:{port_num}/end` - Triggers the logging of the final edit in the EDL. Once this event is received the EDL file will be closed, and you can trigger a **START** event again to create a new EDL if desired.
+
+##### Edit Event JSON Metadata
 Each event type expects the same JSON payload structure:
 
 ```typescript
@@ -69,7 +77,7 @@ Each event type expects the same JSON payload structure:
     "edit_type": "cut" | "wipe" | "dissolve",
     "edit_duration_frames"?: number, 
     "wipe_num"?: number,
-    "source_tape": string,   
+    "source_tape"?: string,   
     "av_channels": {     
         "video": boolean,     
         "audio": number   
@@ -82,7 +90,7 @@ Each event type expects the same JSON payload structure:
 
 - `wipe_num`: Optionally specifies which wipe should be used by the editing system (defaults to `1`). This value is ignored for cuts and dissolves.
 
-- `source_tape`: Specifies the name of the of the tape the edit is being made for. This typically would be the name of the file the source of the video will correspond with in your editing software. The file extension might be needed in such a case depending on the editing software you use.
+- `source_tape`: Optionally specifies the name of the of the tape the edit is being made for. This typically would be the name of the file the source of the video will correspond with in your editing software. The file extension might be needed in such a case depending on the editing software you use. If this filed is not included, EDLgen will attempt to use the preselected source tape which is set by the [**SELECT SOURCE** event](#other-events).
 
 - `av_channels`: Specifies the video and audio channels.
     - `video`: Specifies if the channel contains video.
@@ -112,17 +120,20 @@ Examples...
     } 
 }
 ```
+#### Other Events
 
-#### Edit Events ####
-A JSON payload can be sent to any of the following endpoints via HTTP POST to trigger an edit event of the given type.
+- **SELECT SOURCE** - POST to `127.0.0.1:{port_num}/select-src` - Triggers the pre-selection of a source tape to be used by the next edit events, and will be utilized when an edit event does not contain a `source_tape` field.
 
-- **START** - POST to `127.0.0.1:{port_num}/start` - Triggers the creation of a new EDL file, the initialization of the LTC timecode decoding process, and the first edit log in the EDL. If there is no timecode signal present, the event will wait until a signal is detected before proceeding with logging, meaning you can trigger a start event before you actually start playback of your source. No subsequent events can be triggered until a **START** event has been received.
+##### Select Source Event JSON Metadata
 
-- **LOG** - POST to `127.0.0.1:{port_num}/log` - Triggers the logging of an edit once the EDL has been created and the LTC is decoding after a **START** event as been received. This will likely be the most used event type unless you plan on logging a single edit. 
+```typescript
+{
+    "source_tape": string,   
+}
+```
+- `source_tape`: Specifies the name of the of the tape the edit is being made for.
 
-- **END** - POST to `127.0.0.1:{port_num}/end` - Triggers the logging of the final edit in the EDL. Once this event is received the EDL file will be closed, and you can trigger a **START** event again to create a new EDL if desired.
-
-### Planned Features and TODO ###
+### Planned Features and TODO
 - BitFocus Companion module
 - Handle speed changes
 - Improved logging 
@@ -130,3 +141,4 @@ A JSON payload can be sent to any of the following endpoints via HTTP POST to tr
     - (Dev) Render scroll area with egui rows
     - (Dev) Limit log size?
 - WASM build
+

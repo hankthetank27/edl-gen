@@ -10,10 +10,13 @@ pub mod frame_queue;
 
 use anyhow::{anyhow, Context, Error};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use vtc::Timecode;
+
+use std::{
+    cmp::Ordering,
+    fs::File,
+    io::{BufWriter, Write},
+};
 
 use crate::{
     edl_writer::frame_queue::{EditType, FrameData},

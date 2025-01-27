@@ -1,19 +1,23 @@
 use anyhow::{anyhow, Error};
-use eframe::egui::{self, mutex::Mutex, Ui};
+use eframe::egui::{self, Ui};
 use ltc::LTCFrame;
-use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc, Arc,
-};
-use std::thread::{self, JoinHandle};
+use parking_lot::Mutex;
 
-use crate::edl_writer;
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread::{self, JoinHandle},
+};
+
 use crate::{
     client::update_version,
+    edl_writer,
     ltc_decoder::{
-        config::{LTCDevice, LTCHostId},
+        config::{DevicesFromHost, LTCDevice, LTCHostId},
         LTCListener,
     },
     server::Server,
@@ -22,7 +26,7 @@ use crate::{
 };
 
 pub struct App {
-    rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
+    rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>, // Arc because we need more than one owner
     tx_stop_serv: mpsc::Sender<()>,
     tx_serv_stopped: mpsc::Sender<()>,
     rx_serv_stopped: mpsc::Receiver<()>,

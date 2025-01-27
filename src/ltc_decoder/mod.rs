@@ -4,13 +4,12 @@ use anyhow::{anyhow, Context, Error};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use ltc::{LTCDecoder, LTCFrame};
 use num_traits::cast::AsPrimitive;
-use std::collections::VecDeque;
-use std::sync::mpsc;
-use std::thread;
 use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
+use std::{collections::VecDeque, sync::mpsc, thread};
+
 use crate::{
-    ltc_decoder::config::LTCDevice,
+    ltc_decoder::config::{Device, LTCDevice},
     state::Opt,
     utils::single_val_channel::{self, ChannelErr},
 };
@@ -19,7 +18,7 @@ use crate::{
 
 pub struct LTCListener {
     config: cpal::SupportedStreamConfig,
-    device: cpal::Device,
+    device: Device,
     input_channel: InputChannel,
     opt: Opt,
 }
@@ -185,6 +184,7 @@ impl DecodeContext {
             input_channel,
         }
     }
+
     fn handle_decode<T: AsPrimitive<f32>>(&mut self, data: &[T]) {
         if let Ok(state) = self.decode_state_recv.try_recv() {
             let _ = self.frame_recv_drain.try_recv();
@@ -234,6 +234,7 @@ impl DecodeContext {
     }
 }
 
+#[derive(Clone)]
 pub struct DecodeHandlers {
     pub tx_ltc_frame: single_val_channel::Sender<LTCFrame>,
     pub rx_ltc_frame: single_val_channel::Receiver<LTCFrame>,
