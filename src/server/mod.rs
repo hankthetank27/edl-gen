@@ -469,7 +469,8 @@ mod test {
 
         let opt = Opt {
             title: "test".to_string(),
-            dir: get_or_make_dir(PathBuf::from("../../test-output/")).unwrap(),
+            dir: get_or_make_dir(PathBuf::from("../../test-output/"))
+                .unwrap_or_else(|_| PathBuf::from("./")),
             port: 6969,
             sample_rate: 44_100,
             fps: 30.0,

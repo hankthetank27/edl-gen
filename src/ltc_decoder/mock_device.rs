@@ -3,13 +3,11 @@ use cpal::{
     BufferSize, InputStreamTimestamp, StreamConfig, StreamInstant, SupportedStreamConfig,
     SupportedStreamConfigRange,
 };
-use hound::{self, WavReader};
+use hound;
 use itertools::Itertools;
 
 use std::{
     cell::RefCell,
-    fs::File,
-    io::BufReader,
     time::{Duration, Instant},
     vec::IntoIter,
 };
@@ -81,7 +79,6 @@ pub struct OptConfig {
 
 pub struct MockStream {
     pub file_path: String,
-    pub reader: WavReader<BufReader<File>>,
     pub callback: RefCell<Box<dyn FnMut(&[i32], StreamInstant)>>,
     pub start_time: Instant,
     pub device_stub: cpal::Device,
@@ -92,10 +89,8 @@ impl MockStream {
     where
         F: FnMut(&[i32], StreamInstant) + 'static,
     {
-        let file_path: String = "./assets/audio/LTC_01000000_1mins_30fps_44100x24.wav".into();
         MockStream {
             file_path: "./assets/audio/LTC_01000000_1mins_30fps_44100x24.wav".into(),
-            reader: hound::WavReader::open(file_path).expect("Failed to open WAV file"),
             callback: RefCell::new(Box::new(callback)),
             start_time: Instant::now(),
             device_stub: cpal::default_host().default_input_device().unwrap(),

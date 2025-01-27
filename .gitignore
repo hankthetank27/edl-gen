@@ -6,3 +6,4 @@ flamegraph*
 /.env
 /result
 /test-output
+*.edl
