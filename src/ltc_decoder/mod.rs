@@ -1,6 +1,3 @@
-#[cfg(test)]
-pub(crate) mod mock_device;
-
 pub mod config;
 
 use anyhow::{anyhow, Context, Error};
@@ -137,7 +134,7 @@ impl LTCListener {
             frame_recv,
             decode_state_sender,
             stop_listen_sender,
-            self.opt.into(),
+            self.opt,
         )
     }
 

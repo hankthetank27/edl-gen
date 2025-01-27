@@ -1,5 +1,5 @@
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
+    traits::{DeviceTrait, StreamTrait},
     BufferSize, InputStreamTimestamp, StreamConfig, StreamInstant, SupportedStreamConfig,
     SupportedStreamConfigRange,
 };
@@ -78,10 +78,9 @@ pub struct OptConfig {
 }
 
 pub struct MockStream {
-    pub file_path: String,
+    pub ltc_wav_file_path: &'static str,
     pub callback: RefCell<Box<dyn FnMut(&[i32], StreamInstant)>>,
     pub start_time: Instant,
-    pub device_stub: cpal::Device,
 }
 
 impl MockStream {
@@ -90,10 +89,9 @@ impl MockStream {
         F: FnMut(&[i32], StreamInstant) + 'static,
     {
         MockStream {
-            file_path: "./assets/audio/LTC_01000000_1mins_30fps_44100x24.wav".into(),
+            ltc_wav_file_path: "./assets/audio/LTC_01000000_1mins_30fps_44100x24.wav",
             callback: RefCell::new(Box::new(callback)),
             start_time: Instant::now(),
-            device_stub: cpal::default_host().default_input_device().unwrap(),
         }
     }
 
@@ -108,7 +106,7 @@ impl MockStream {
 impl StreamTrait for MockStream {
     fn play(&self) -> Result<(), cpal::PlayStreamError> {
         let mut reader =
-            hound::WavReader::open(self.file_path.clone()).expect("Failed to open WAV file");
+            hound::WavReader::open(self.ltc_wav_file_path).expect("Failed to open WAV file");
         let sample_duration =
             Duration::from_secs_f32(BUFFER_SIZE as f32 / reader.spec().sample_rate as f32);
 
@@ -118,7 +116,6 @@ impl StreamTrait for MockStream {
             // Simulate a delay based on the sample rate
             std::thread::sleep(sample_duration);
         }
-
         Ok(())
     }
 
@@ -144,7 +141,7 @@ impl DeviceTrait for MockDevice {
         D: FnMut(&[T], &cpal::InputCallbackInfo) + Send + 'static,
         E: FnMut(cpal::StreamError) + Send + 'static,
     {
-        let callback = move |samples: &[i32], stream_instant| {
+        Ok(MockStream::new(move |samples: &[i32], stream_instant| {
             let input_timestamp = InputStreamTimestamp {
                 callback: stream_instant,
                 capture: stream_instant,
@@ -153,8 +150,7 @@ impl DeviceTrait for MockDevice {
             let converted_samples: &[T] =
                 unsafe { std::slice::from_raw_parts(samples.as_ptr() as *const T, samples.len()) };
             data_callback(converted_samples, &callback_info);
-        };
-        Ok(MockStream::new(callback))
+        }))
     }
 
     fn name(&self) -> Result<String, cpal::DeviceNameError> {
