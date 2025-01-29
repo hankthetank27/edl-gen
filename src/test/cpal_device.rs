@@ -89,7 +89,7 @@ pub struct OptConfig {
 
 pub struct MockStream {
     pub ltc_wav_file_path: &'static str,
-    pub callback: Arc<Mutex<Box<dyn FnMut(&[i32], StreamInstant) + Send>>>,
+    pub callback: Arc<Mutex<dyn FnMut(&[i32], StreamInstant) + Send>>,
     pub rx_start_playing: Arc<Mutex<Receiver<()>>>,
 }
 
@@ -100,7 +100,7 @@ impl MockStream {
     {
         MockStream {
             ltc_wav_file_path: "./assets/audio/LTC_01000000_1mins_30fps_44100x24.wav",
-            callback: Arc::new(Mutex::new(Box::new(callback))),
+            callback: Arc::new(Mutex::new(callback)),
             rx_start_playing: Arc::clone(&rx_start_playing),
         }
     }

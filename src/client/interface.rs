@@ -26,7 +26,8 @@ use crate::{
 };
 
 pub struct App {
-    rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>, // Arc because we need more than one owner
+    // Arc because we need more than one owner, and Mutex to implement Sync
+    rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
     tx_stop_serv: mpsc::Sender<()>,
     tx_serv_stopped: mpsc::Sender<()>,
     rx_serv_stopped: mpsc::Receiver<()>,
