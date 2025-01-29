@@ -174,8 +174,14 @@ impl<'req> Request<'req> {
     fn route(&mut self, ctx: &mut Context) -> Result<Response, Error> {
         match self.method {
             Some("POST") => match self.path {
-                Some("/start") => self.handle_start(ctx),
-                Some("/end") => self.handle_end(ctx),
+                Some("/start") => self.handle_start(ctx).or_else(|e| {
+                    ctx.lock().rec_state = EdlRecordingState::Stopped;
+                    Err(e)
+                }),
+                Some("/end") => self.handle_end(ctx).or_else(|e| {
+                    ctx.lock().rec_state = EdlRecordingState::Started;
+                    Err(e)
+                }),
                 Some("/log") => self.handle_log(ctx),
                 Some("/select-src") => self.handle_select_src(ctx),
                 _ => Ok(not_found()),
@@ -192,6 +198,7 @@ impl<'req> Request<'req> {
         let mut ctx_guard = ctx.lock();
         match ctx_guard.rec_state {
             EdlRecordingState::Stopped => {
+                ctx_guard.rec_state = EdlRecordingState::Started;
                 ctx_guard.decode_handlers.decode_on()?;
                 ctx_guard.frame_queue.clear();
                 ctx_guard.edl = Some(Edl::new(&ctx_guard.opt)?);
@@ -199,7 +206,6 @@ impl<'req> Request<'req> {
                 drop(ctx_guard);
                 let mut response = self.body()?.expect_edit()?.wait_for_first_frame(ctx)?;
                 response.content = format!("Started decoding. {}", response.content);
-                ctx.lock().rec_state = EdlRecordingState::Started;
                 Ok(response)
             }
             EdlRecordingState::Started => {
@@ -211,16 +217,15 @@ impl<'req> Request<'req> {
     }
 
     fn handle_end(&mut self, ctx: &mut Context) -> Result<Response, Error> {
-        let ctx_guard = ctx.lock();
+        let mut ctx_guard = ctx.lock();
         match ctx_guard.rec_state {
             EdlRecordingState::Started => {
+                ctx_guard.rec_state = EdlRecordingState::Stopped;
                 drop(ctx_guard);
                 let mut response = self.body()?.expect_edit()?.try_log_edit(ctx)?;
-                let mut ctx_guard = ctx.lock();
-                ctx_guard.decode_handlers.decode_off()?;
+                ctx.lock().decode_handlers.decode_off()?;
                 log::info!("\nEnded recording.");
                 response.content = format!("Stopped decoding with {}", response.content);
-                ctx_guard.rec_state = EdlRecordingState::Stopped;
                 Ok(response)
             }
             EdlRecordingState::Stopped => {
@@ -447,7 +452,7 @@ mod test {
         ltc_decoder::LTCListener,
         server::{EditRequestData, Server, SourceTapeRequestData},
         state::Logger,
-        test::state::test_opt,
+        test::{cpal_device::MockDevice, state::test_opt},
     };
     use std::{
         sync::{mpsc, Arc},
@@ -456,13 +461,16 @@ mod test {
     };
 
     struct TestServer {
+        device: MockDevice,
         port: usize,
         tx_stop_serv: mpsc::Sender<()>,
     }
 
+    // TODO: add test for multiple start events triggering while waiting
     impl TestServer {
         fn new(port: usize, file_name: String) -> Self {
             let opt = test_opt(port, file_name);
+            let device = opt.ltc_device.as_ref().unwrap().device.clone();
 
             Logger::init(&Context::default());
 
@@ -478,14 +486,23 @@ mod test {
             });
             thread::sleep(Duration::from_millis(300));
 
-            Self { port, tx_stop_serv }
+            Self {
+                device,
+                port,
+                tx_stop_serv,
+            }
         }
     }
 
     #[test]
-    fn test_edit_events() {
-        let TestServer { port, tx_stop_serv } =
-            TestServer::new(6670, "test_edit_events".to_string());
+    fn test_basic_edit_events() {
+        let TestServer {
+            device,
+            port,
+            tx_stop_serv,
+        } = TestServer::new(6670, "test_basic_edit_events".to_string());
+
+        device.tx_start_playing.send(()).unwrap();
 
         let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
             .with_header("Content-Type", "application/json")
@@ -583,9 +600,62 @@ mod test {
     }
 
     #[test]
+    fn test_wait_for_ltc_on_start() {
+        let TestServer {
+            device,
+            port,
+            tx_stop_serv,
+        } = TestServer::new(6908, "test_wait_for_ltc_on_start".to_string());
+
+        let handle = thread::spawn(move || {
+            let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: Some("tape1".into()),
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            let cut_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: Some("tape2".into()),
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+
+            assert_eq!(start_res.status_code, 200);
+            assert_eq!(cut_1_res.status_code, 200);
+        });
+
+        thread::sleep(Duration::from_millis(2000));
+        device.tx_start_playing.send(()).unwrap();
+        handle.join().unwrap();
+        tx_stop_serv.send(()).unwrap();
+    }
+
+    #[test]
     fn test_edit_events_with_preselected_src() {
-        let TestServer { port, tx_stop_serv } =
-            TestServer::new(7891, "test_edit_events_with_preselected_src".to_string());
+        let TestServer {
+            device,
+            port,
+            tx_stop_serv,
+        } = TestServer::new(7891, "test_edit_events_with_preselected_src".to_string());
+
+        device.tx_start_playing.send(()).unwrap();
 
         let src_res = minreq::post(format!("http://127.0.0.1:{port}/select-src"))
             .with_header("Content-Type", "application/json")
@@ -649,9 +719,94 @@ mod test {
     }
 
     #[test]
-    fn test_event_failtures() {
-        let TestServer { port, tx_stop_serv } =
-            TestServer::new(7910, "test_event_failtures".to_string());
+    fn test_select_src_while_waiting() {
+        let TestServer {
+            device,
+            port,
+            tx_stop_serv,
+        } = TestServer::new(6928, "test_select_src_while_waiting".to_string());
+
+        let handle_start = thread::spawn(move || {
+            let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            let cut_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            let end_res = minreq::post(format!("http://127.0.0.1:{port}/end"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(start_res.status_code, 200);
+            assert_eq!(cut_1_res.status_code, 200);
+            assert_eq!(end_res.status_code, 200);
+        });
+
+        thread::sleep(Duration::from_millis(1500));
+
+        let handle_src = thread::spawn(move || {
+            let src_res = minreq::post(format!("http://127.0.0.1:{port}/select-src"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&SourceTapeRequestData {
+                        source_tape: "tape1".into(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(src_res.status_code, 200);
+        });
+
+        thread::sleep(Duration::from_millis(2000));
+
+        handle_src.join().unwrap();
+        device.tx_start_playing.send(()).unwrap();
+        handle_start.join().unwrap();
+        tx_stop_serv.send(()).unwrap();
+    }
+
+    #[test]
+    fn test_event_failures() {
+        let TestServer {
+            device,
+            port,
+            tx_stop_serv,
+        } = TestServer::new(7910, "test_event_failures".to_string());
+
+        device.tx_start_playing.send(()).unwrap();
 
         let cut_first = minreq::post(format!("http://127.0.0.1:{port}/cut"))
             .with_header("Content-Type", "application/json")
@@ -725,6 +880,85 @@ mod test {
         assert_eq!(end_before_start.status_code, 404);
         assert_eq!(cut_before_start.status_code, 404);
 
+        tx_stop_serv.send(()).unwrap();
+    }
+
+    #[test]
+    fn test_event_repeats() {
+        let TestServer {
+            device,
+            port,
+            tx_stop_serv,
+        } = TestServer::new(7915, "test_event_repeats".to_string());
+
+        minreq::post(format!("http://127.0.0.1:{port}/select-src"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&SourceTapeRequestData {
+                    source_tape: "tape1".into(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        let handle_1 = thread::spawn(move || {
+            let start_1 = minreq::post(format!("http://127.0.0.1:{port}/start"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(start_1.status_code, 200);
+        });
+        thread::sleep(Duration::from_millis(150));
+        let handle_2 = thread::spawn(move || {
+            let start_2 = minreq::post(format!("http://127.0.0.1:{port}/start"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(start_2.status_code, 404);
+        });
+        thread::sleep(Duration::from_millis(150));
+        let handle_3 = thread::spawn(move || {
+            let start_3 = minreq::post(format!("http://127.0.0.1:{port}/start"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(start_3.status_code, 404);
+            device.tx_start_playing.send(()).unwrap();
+        });
+
+        handle_3.join().unwrap();
+        handle_2.join().unwrap();
+        handle_1.join().unwrap();
         tx_stop_serv.send(()).unwrap();
     }
 }

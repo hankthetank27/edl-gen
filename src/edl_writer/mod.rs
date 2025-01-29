@@ -50,7 +50,7 @@ impl Edl {
             };
         }
 
-        let mut file = BufWriter::new(File::create_new(path)?);
+        let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
         file.write_all(format!("FCM: {}\n", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
@@ -363,6 +363,7 @@ fn trim_tape_name(tape: String) -> String {
     tape.chars().take(8).collect()
 }
 
+// TODO: this should handle edit duration seperately
 fn validate_num_size(num: u32) -> Result<String, Error> {
     match num.cmp(&1000) {
         Ordering::Less => {
