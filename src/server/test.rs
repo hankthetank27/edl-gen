@@ -28,7 +28,7 @@ impl TestServer {
 
         Logger::init(&Context::default());
 
-        let decode_handlers = LTCListener::new(opt.clone()).unwrap().listen();
+        let decode_handlers = LTCListener::new(opt.clone()).unwrap().listen().unwrap();
         let (tx_stop_serv, rx_stop_serv) = mpsc::channel::<()>();
         let (tx_serv_stopped, _rx_serv_stopped) = mpsc::channel::<()>();
         let rx_stop_serv = Arc::new(Mutex::new(rx_stop_serv));
@@ -328,6 +328,46 @@ fn test_select_src_while_waiting() {
         assert_eq!(end_res.status_code, 200);
     });
 
+    for _ in 0..10 {
+        thread::spawn(move || {
+            let try_cut = minreq::post(format!("http://127.0.0.1:{port}/log"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(try_cut.status_code, 404);
+        });
+    }
+
+    for _ in 0..3 {
+        thread::spawn(move || {
+            let try_end = minreq::post(format!("http://127.0.0.1:{port}/end"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(try_end.status_code, 404);
+        });
+    }
+
     thread::sleep(Duration::from_millis(1500));
 
     let handle_src = thread::spawn(move || {
@@ -344,7 +384,7 @@ fn test_select_src_while_waiting() {
         assert_eq!(src_res.status_code, 200);
     });
 
-    thread::sleep(Duration::from_millis(2000));
+    // thread::sleep(Duration::from_millis(2000));
 
     handle_src.join().unwrap();
     device.tx_start_playing.send(()).unwrap();
@@ -507,9 +547,107 @@ fn test_event_repeats() {
             .send()
             .unwrap();
         assert_eq!(start_3.status_code, 404);
+    });
+    thread::sleep(Duration::from_millis(10));
+    let handle_4 = thread::spawn(move || {
+        let start_4 = minreq::post(format!("http://127.0.0.1:{port}/start"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        assert_eq!(start_4.status_code, 404);
+    });
+    thread::sleep(Duration::from_millis(10));
+    let handle_5 = thread::spawn(move || {
+        let start_5 = minreq::post(format!("http://127.0.0.1:{port}/start"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        assert_eq!(start_5.status_code, 404);
+    });
+    thread::sleep(Duration::from_millis(10));
+    let handle_6 = thread::spawn(move || {
+        let log_1 = minreq::post(format!("http://127.0.0.1:{port}/log"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        assert_eq!(log_1.status_code, 404);
+    });
+    thread::sleep(Duration::from_millis(10));
+
+    for _ in 0..20 {
+        thread::spawn(move || {
+            let log = minreq::post(format!("http://127.0.0.1:{port}/log"))
+                .with_header("Content-Type", "application/json")
+                .with_body(
+                    serde_json::to_string(&EditRequestData {
+                        edit_type: "cut".into(),
+                        edit_duration_frames: None,
+                        wipe_num: None,
+                        source_tape: None,
+                        av_channels: AVChannels::default(),
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .unwrap();
+            assert_eq!(log.status_code, 404);
+        });
+    }
+
+    thread::sleep(Duration::from_millis(50));
+    let handle_7 = thread::spawn(move || {
+        let start_7 = minreq::post(format!("http://127.0.0.1:{port}/start"))
+            .with_header("Content-Type", "application/json")
+            .with_body(
+                serde_json::to_string(&EditRequestData {
+                    edit_type: "cut".into(),
+                    edit_duration_frames: None,
+                    wipe_num: None,
+                    source_tape: None,
+                    av_channels: AVChannels::default(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .unwrap();
+        assert_eq!(start_7.status_code, 404);
         device.tx_start_playing.send(()).unwrap();
     });
 
+    handle_7.join().unwrap();
+    handle_6.join().unwrap();
+    handle_5.join().unwrap();
+    handle_4.join().unwrap();
     handle_3.join().unwrap();
     handle_2.join().unwrap();
     handle_1.join().unwrap();

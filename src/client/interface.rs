@@ -44,10 +44,17 @@ impl Default for App {
         let is_current_version = Arc::new(AtomicBool::new(true));
 
         let is_current_version_check = Arc::clone(&is_current_version);
-        thread::spawn(move || match update_version::update_available() {
-            Ok(is_available) => is_current_version_check.store(!is_available, Ordering::Relaxed),
-            Err(e) => eprintln!("{e}"),
-        });
+        let _ = thread::Builder::new()
+            .name("edlgen-updater".into())
+            .spawn(move || match update_version::update_available() {
+                Ok(is_available) => {
+                    is_current_version_check.store(!is_available, Ordering::Relaxed)
+                }
+                Err(e) => eprintln!("{e}"),
+            })
+            .map_err(|e| {
+                eprintln!("Error spawning update: {e}");
+            });
 
         App {
             server_handle: None,
@@ -63,22 +70,31 @@ impl Default for App {
 }
 
 impl App {
-    fn spawn_server(&mut self) {
-        let decode_handlers = match LTCListener::new(self.opt.clone()) {
-            Ok(listener) => listener.listen(),
-            Err(e) => {
-                log::error!("{}", e);
-                return;
-            }
-        };
+    fn spawn_server(&mut self) -> Result<(), Error> {
+        let decode_handlers = LTCListener::new(self.opt.clone())
+            .map_err(|e| e.context("Unable to initate LTC listener"))
+            .and_then(|listener| listener.listen())
+            .map_err(|e| e.context("Error spawning LTC listener thread"))?;
+
         let opt = self.opt.clone();
         let rx_stop_serv = Arc::clone(&self.rx_stop_serv);
         let tx_serv_stopped = self.tx_serv_stopped.clone();
 
         self.tx_ltc_frame = Some(decode_handlers.tx_ltc_frame.clone());
-        self.server_handle = Some(thread::spawn(move || {
-            Server::new(&opt.port).listen(rx_stop_serv, tx_serv_stopped, decode_handlers, opt)
-        }));
+        self.server_handle = Some(
+            thread::Builder::new()
+                .name("edlgen-server".into())
+                .spawn(move || {
+                    Server::new(&opt.port).listen(
+                        rx_stop_serv,
+                        tx_serv_stopped,
+                        decode_handlers,
+                        opt,
+                    )
+                })
+                .map_err(|e| anyhow!("Error spawning server thread: {e}"))?,
+        );
+        Ok(())
     }
 
     fn kill_server(&mut self) -> Result<(), Error> {
@@ -414,6 +430,7 @@ impl eframe::App for App {
             ui.add_enabled_ui(self.server_handle.is_none(), |ui| {
                 if ui.button("Launch Server").clicked() {
                     self.spawn_server()
+                        .unwrap_or_else(|e| log::error!("Unable to spawn server: {e}"))
                 }
             });
 

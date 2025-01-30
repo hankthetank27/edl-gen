@@ -27,7 +27,7 @@ impl Server {
         }
     }
 
-    #[tokio::main]
+    #[tokio::main(flavor = "multi_thread", worker_threads = 3)]
     pub async fn listen(
         &mut self,
         rx_stop_serv: Arc<Mutex<mpsc::Receiver<()>>>,
@@ -123,6 +123,7 @@ pub struct ContextInner {
 enum EdlRecordingState {
     Started,
     Stopped,
+    Waiting,
 }
 
 #[derive(Debug)]
@@ -196,7 +197,7 @@ impl<'req> Request<'req> {
         let mut ctx_guard = ctx.lock();
         match ctx_guard.rec_state {
             EdlRecordingState::Stopped => {
-                ctx_guard.rec_state = EdlRecordingState::Started;
+                ctx_guard.rec_state = EdlRecordingState::Waiting;
                 ctx_guard.decode_handlers.decode_on()?;
                 ctx_guard.frame_queue.clear();
                 ctx_guard.edl = Some(Edl::new(&ctx_guard.opt)?);
@@ -204,9 +205,10 @@ impl<'req> Request<'req> {
                 drop(ctx_guard);
                 let mut response = self.body()?.expect_edit()?.wait_for_first_frame(ctx)?;
                 response.content = format!("Started decoding. {}", response.content);
+                ctx.lock().rec_state = EdlRecordingState::Started;
                 Ok(response)
             }
-            EdlRecordingState::Started => {
+            EdlRecordingState::Started | EdlRecordingState::Waiting => {
                 let msg = "Recording has already started. You cannot start in this state.";
                 log::warn!("{msg}");
                 Ok(Response::new(msg.into(), StatusCode::S404))
@@ -226,7 +228,7 @@ impl<'req> Request<'req> {
                 response.content = format!("Stopped decoding with {}", response.content);
                 Ok(response)
             }
-            EdlRecordingState::Stopped => {
+            EdlRecordingState::Stopped | EdlRecordingState::Waiting => {
                 let msg = "Recording not yet started!";
                 log::warn!("{msg}");
                 Ok(Response::new(msg.into(), StatusCode::S404))
@@ -241,7 +243,7 @@ impl<'req> Request<'req> {
                 drop(ctx_guard);
                 self.body()?.expect_edit()?.try_log_edit(ctx)
             }
-            EdlRecordingState::Stopped => {
+            EdlRecordingState::Stopped | EdlRecordingState::Waiting => {
                 let msg = "Recording not yet started!";
                 log::warn!("{msg}");
                 Ok(Response::new(msg.into(), StatusCode::S404))

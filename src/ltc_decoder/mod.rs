@@ -56,7 +56,7 @@ impl LTCListener {
         })
     }
 
-    pub fn listen(self) -> DecodeHandlers {
+    pub fn listen(self) -> Result<DecodeHandlers, Error> {
         let (frame_sender, frame_recv) = single_val_channel::channel::<LTCFrame>();
         let (decode_state_sender, decode_state_recv) = mpsc::channel::<DecodeState>();
         let (stop_listen_sender, stop_listen_recv) = mpsc::channel::<()>();
@@ -78,64 +78,66 @@ impl LTCListener {
             },
         };
 
-        thread::spawn(move || -> Result<(), Error> {
-            let err_fn = |err| log::error!("an error occurred on stream: {}", err);
-            let stream = match self.config.sample_format() {
-                cpal::SampleFormat::I8 => self
-                    .device
-                    .build_input_stream(
-                        &input_config,
-                        move |data, _: &_| ctx.handle_decode::<i8>(data),
-                        err_fn,
-                        None,
-                    )
-                    .context("Could not build input stream"),
-                cpal::SampleFormat::I16 => self
-                    .device
-                    .build_input_stream(
-                        &input_config,
-                        move |data, _: &_| ctx.handle_decode::<i16>(data),
-                        err_fn,
-                        None,
-                    )
-                    .context("Could not build input stream"),
-                cpal::SampleFormat::I32 => self
-                    .device
-                    .build_input_stream(
-                        &input_config,
-                        move |data, _: &_| ctx.handle_decode::<i32>(data),
-                        err_fn,
-                        None,
-                    )
-                    .context("Could not build input stream"),
-                cpal::SampleFormat::F32 => self
-                    .device
-                    .build_input_stream(
-                        &input_config,
-                        move |data, _: &_| ctx.handle_decode::<f32>(data),
-                        err_fn,
-                        None,
-                    )
-                    .context("Could not build input stream"),
-                sample_format => Err(Error::msg(format!(
-                    "Unsupported sample format '{sample_format}'"
-                ))),
-            }?;
+        thread::Builder::new()
+            .name("edlgen-ltc-listener".into())
+            .spawn(move || -> Result<(), Error> {
+                let err_fn = |err| log::error!("an error occurred on stream: {}", err);
+                let stream = match self.config.sample_format() {
+                    cpal::SampleFormat::I8 => self
+                        .device
+                        .build_input_stream(
+                            &input_config,
+                            move |data, _: &_| ctx.handle_decode::<i8>(data),
+                            err_fn,
+                            None,
+                        )
+                        .context("Could not build input stream"),
+                    cpal::SampleFormat::I16 => self
+                        .device
+                        .build_input_stream(
+                            &input_config,
+                            move |data, _: &_| ctx.handle_decode::<i16>(data),
+                            err_fn,
+                            None,
+                        )
+                        .context("Could not build input stream"),
+                    cpal::SampleFormat::I32 => self
+                        .device
+                        .build_input_stream(
+                            &input_config,
+                            move |data, _: &_| ctx.handle_decode::<i32>(data),
+                            err_fn,
+                            None,
+                        )
+                        .context("Could not build input stream"),
+                    cpal::SampleFormat::F32 => self
+                        .device
+                        .build_input_stream(
+                            &input_config,
+                            move |data, _: &_| ctx.handle_decode::<f32>(data),
+                            err_fn,
+                            None,
+                        )
+                        .context("Could not build input stream"),
+                    sample_format => Err(Error::msg(format!(
+                        "Unsupported sample format '{sample_format}'"
+                    ))),
+                }?;
 
-            stream.play()?;
-            stop_listen_recv.recv()?;
-            log::info!("Stopped listening for LTC.");
+                stream.play()?;
+                stop_listen_recv.recv()?;
+                log::info!("Stopped listening for LTC.");
 
-            Ok(())
-        });
+                Ok(())
+            })?;
 
-        DecodeHandlers::new(
+        Ok(DecodeHandlers::new(
             frame_sender,
             frame_recv,
             decode_state_sender,
             stop_listen_sender,
             self.opt,
-        )
+        ))
     }
 
     fn samples_per_frame(&self) -> f32 {
