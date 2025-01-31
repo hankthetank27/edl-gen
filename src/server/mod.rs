@@ -51,8 +51,6 @@ impl Server {
 
         loop {
             let (socket, _) = listener.accept().await.context("Unable to connect")?;
-            // A new task is spawned for each inbound socket. The socket is
-            // moved to the new task and processed there.
             let ctx = Arc::clone(&ctx);
             tokio::spawn(async move {
                 Server::handle_connection(socket, ctx)

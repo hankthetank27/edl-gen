@@ -20,7 +20,6 @@ struct TestServer {
     tx_stop_serv: mpsc::Sender<()>,
 }
 
-// TODO: add test for multiple start events triggering while waiting
 impl TestServer {
     fn new(port: usize, file_name: String) -> Self {
         let opt = test_opt(port, file_name);

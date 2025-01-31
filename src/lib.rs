@@ -1,4 +1,4 @@
-pub mod client;
+pub mod gui;
 pub mod edl_writer;
 pub mod ltc_decoder;
 pub mod server;

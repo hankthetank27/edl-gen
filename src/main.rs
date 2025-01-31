@@ -8,7 +8,7 @@ use font_kit::{
 
 use std::{env, fs};
 
-use edl_gen::{client::interface::App, state::Logger};
+use edl_gen::{gui::App, state::Logger};
 
 fn main() -> Result<(), Error> {
     let start = std::time::Instant::now();

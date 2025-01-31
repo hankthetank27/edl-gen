@@ -1,3 +1,5 @@
+mod update_version;
+
 use anyhow::{anyhow, Error};
 use eframe::egui::{self, Ui};
 use ltc::LTCFrame;
@@ -14,7 +16,6 @@ use std::{
 };
 
 use crate::{
-    client::update_version,
     edl_writer,
     ltc_decoder::{
         config::{DevicesFromHost, LTCDevice, LTCHostId},
@@ -50,10 +51,10 @@ impl Default for App {
                 Ok(is_available) => {
                     is_current_version_check.store(!is_available, Ordering::Relaxed)
                 }
-                Err(e) => eprintln!("{e}"),
+                Err(e) => eprintln!("Error fetching update status: {e}"),
             })
             .map_err(|e| {
-                eprintln!("Error spawning update: {e}");
+                eprintln!("Error spawning update thread: {e}");
             });
 
         App {
@@ -135,11 +136,9 @@ impl App {
                     }
                 }
 
-                handle
-                    .join()
-                    .expect("Could not kill server, error waiting for shutdown")?;
-
-                Ok(())
+                handle.join().map_err(|e| {
+                    anyhow!("Could not kill server, error waiting for shutdown: {:?}", e)
+                })?
             }
             None => Err(anyhow!("Expected server handle")),
         }
