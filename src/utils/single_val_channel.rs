@@ -4,14 +4,16 @@ use std::{
     fmt,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Condvar, Mutex, MutexGuard, PoisonError,
+        Arc, Condvar, Mutex, MutexGuard, PoisonError, WaitTimeoutResult,
     },
+    time::Duration,
 };
 
 #[derive(Debug)]
 pub enum ChannelErr {
     Lock,
     NoVal,
+    Timedout,
 }
 
 impl Error for ChannelErr {}
@@ -21,15 +23,30 @@ impl fmt::Display for ChannelErr {
         match *self {
             ChannelErr::Lock => write!(f, "Lock poisoned"),
             ChannelErr::NoVal => write!(f, "No value found"),
+            ChannelErr::Timedout => write!(f, "Timedout"),
         }
     }
 }
 
+//PoisonError
 type PErr<'a, T> = PoisonError<MutexGuard<'a, Option<T>>>;
 
 impl<'a, T> From<PErr<'a, T>> for ChannelErr {
     fn from(_: PErr<'a, T>) -> ChannelErr {
         ChannelErr::Lock
+    }
+}
+
+//TimeoutError
+type TOErr<'a, T> = PoisonError<(MutexGuard<'a, Option<T>>, WaitTimeoutResult)>;
+
+impl<'a, T> From<TOErr<'a, T>> for ChannelErr {
+    fn from(err: TOErr<'a, T>) -> ChannelErr {
+        if err.get_ref().1.timed_out() {
+            ChannelErr::Timedout
+        } else {
+            ChannelErr::Lock
+        }
     }
 }
 
@@ -99,7 +116,22 @@ impl<T> Receiver<T> {
         let mut guard = self.0.value.lock()?;
         while guard.is_none() {
             guard = self.0.cvar.wait(guard)?;
-            if self.0.closed.load(Ordering::Relaxed) {
+            if self.0.closed.load(Ordering::Acquire) {
+                return Err(ChannelErr::NoVal);
+            }
+        }
+        Ok(guard.take().unwrap())
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<T, ChannelErr> {
+        let mut guard = self.0.value.lock()?;
+        while guard.is_none() {
+            let (wait_gaurd, timeout_res) = self.0.cvar.wait_timeout(guard, timeout)?;
+            if timeout_res.timed_out() {
+                return Err(ChannelErr::Timedout);
+            }
+            guard = wait_gaurd;
+            if self.0.closed.load(Ordering::Acquire) {
                 return Err(ChannelErr::NoVal);
             }
         }

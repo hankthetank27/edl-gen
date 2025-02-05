@@ -9,6 +9,8 @@
 pub mod frame_queue;
 
 use anyhow::{anyhow, Context, Error};
+use serde::ser::{SerializeStruct, Serializer};
+
 use serde::{Deserialize, Serialize};
 use vtc::Timecode;
 
@@ -57,12 +59,12 @@ impl Edl {
         Ok(Edl { file })
     }
 
-    pub fn write_from_edit(&mut self, edit: Edit) -> Result<String, Error> {
-        let edit_str: String = edit.try_into()?;
+    pub fn write_from_edit(&mut self, edit: Edit) -> Result<Edit, Error> {
+        let edit_str: String = (&edit).try_into()?;
         self.file.write_all(format!("\n{edit_str}").as_bytes())?;
         self.file.flush()?;
         log::info!("{edit_str}");
-        Ok(edit_str)
+        Ok(edit)
     }
 }
 
@@ -107,7 +109,9 @@ impl Ntsc {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(Deserialize))]
 pub enum Edit {
     Cut(Clip),
     Dissolve(Dissolve),
@@ -213,12 +217,12 @@ impl<'a> FrameDataPair<'a> {
     }
 }
 
-impl TryFrom<Edit> for String {
+impl TryFrom<&Edit> for String {
     type Error = Error;
 
-    fn try_from(value: Edit) -> Result<Self, Self::Error> {
-        let (cut_one_str, cut_two_str) = value.get_strs()?;
-        match value {
+    fn try_from(edit: &Edit) -> Result<Self, Self::Error> {
+        let (cut_one_str, cut_two_str) = edit.get_strs()?;
+        match edit {
             Edit::Cut(clip) => {
                 let from_cmt = format!("* FROM CLIP NAME: {}", clip.source_tape);
                 let from: String = EdlEditLine::from_clip(clip, cut_one_str, None)?.into();
@@ -228,9 +232,10 @@ impl TryFrom<Edit> for String {
             Edit::Dissolve(dissolve) => {
                 let from_cmt = format!("* FROM CLIP NAME: {}", dissolve.from.source_tape);
                 let to_cmt = format!("* TO CLIP NAME: {}", dissolve.to.source_tape);
-                let from: String = EdlEditLine::from_clip(dissolve.from, cut_one_str, None)?.into();
+                let from: String =
+                    EdlEditLine::from_clip(&dissolve.from, cut_one_str, None)?.into();
                 let to: String = EdlEditLine::from_clip(
-                    dissolve.to,
+                    &dissolve.to,
                     cut_two_str,
                     Some(dissolve.edit_duration_frames),
                 )?
@@ -241,9 +246,9 @@ impl TryFrom<Edit> for String {
             Edit::Wipe(wipe) => {
                 let from_cmt = format!("* FROM CLIP NAME: {}", wipe.from.source_tape);
                 let to_cmt = format!("* TO CLIP NAME: {}", wipe.to.source_tape);
-                let from: String = EdlEditLine::from_clip(wipe.from, cut_one_str, None)?.into();
+                let from: String = EdlEditLine::from_clip(&wipe.from, cut_one_str, None)?.into();
                 let to: String =
-                    EdlEditLine::from_clip(wipe.to, cut_two_str, Some(wipe.edit_duration_frames))?
+                    EdlEditLine::from_clip(&wipe.to, cut_two_str, Some(wipe.edit_duration_frames))?
                         .into();
                 Ok(format!("\n{from}\n{to}\n{from_cmt}\n{to_cmt}"))
             }
@@ -275,31 +280,50 @@ impl From<AVChannels> for String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct Dissolve {
-    from: Clip,
-    to: Clip,
-    edit_duration_frames: u32,
+    pub from: Clip,
+    pub to: Clip,
+    pub edit_duration_frames: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct Wipe {
-    from: Clip,
-    to: Clip,
-    wipe_number: u32,
-    edit_duration_frames: u32,
+    pub from: Clip,
+    pub to: Clip,
+    pub wipe_number: u32,
+    pub edit_duration_frames: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Clip {
-    edit_number: usize,
-    source_tape: String,
-    av_channels: AVChannels,
-    source_in: Timecode,
-    source_out: Timecode,
-    record_in: Timecode,
-    record_out: Timecode,
+    pub edit_number: usize,
+    pub source_tape: String,
+    pub av_channels: AVChannels,
+    pub source_in: Timecode,
+    pub source_out: Timecode,
+    pub record_in: Timecode,
+    pub record_out: Timecode,
     //TODO: speed_change
+}
+
+impl Serialize for Clip {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Clip", 7)?;
+        state.serialize_field("edit_number", &self.edit_number)?;
+        state.serialize_field("source_tape", &self.source_tape)?;
+        state.serialize_field("av_channels", &self.av_channels)?;
+        state.serialize_field("source_in", &self.source_in.timecode())?;
+        state.serialize_field("source_out", &self.source_out.timecode())?;
+        state.serialize_field("record_in", &self.record_in.timecode())?;
+        state.serialize_field("record_out", &self.record_out.timecode())?;
+        state.end()
+    }
 }
 
 #[derive(Debug)]
@@ -318,7 +342,7 @@ pub struct EdlEditLine {
 
 impl EdlEditLine {
     fn from_clip(
-        clip: Clip,
+        clip: &Clip,
         edit_type: String,
         edit_duration_frames: Option<u32>,
     ) -> Result<Self, Error> {
@@ -330,7 +354,7 @@ impl EdlEditLine {
         Ok(EdlEditLine {
             edit_number: validate_num_size(clip.edit_number as u32)?,
             //TODO: need name validation
-            source_tape: trim_tape_name(clip.source_tape),
+            source_tape: trim_tape_name(&clip.source_tape),
             av_channels: clip.av_channels.into(),
             source_in: clip.source_in.timecode(),
             source_out: clip.source_out.timecode(),
@@ -359,7 +383,7 @@ impl From<EdlEditLine> for String {
     }
 }
 
-fn trim_tape_name(tape: String) -> String {
+fn trim_tape_name(tape: &str) -> String {
     tape.chars().take(8).collect()
 }
 
@@ -415,10 +439,10 @@ mod test {
 
     #[test]
     fn validate_trimmed_tape_name() {
-        assert_eq!(trim_tape_name("".to_string()).len(), 0);
-        assert_eq!(trim_tape_name("test".to_string()).len(), 4);
-        assert_eq!(trim_tape_name("testtest".to_string()).len(), 8);
-        assert_eq!(trim_tape_name("testtest.test".to_string()).len(), 8);
+        assert_eq!(trim_tape_name("").len(), 0);
+        assert_eq!(trim_tape_name("test").len(), 4);
+        assert_eq!(trim_tape_name("testtest").len(), 8);
+        assert_eq!(trim_tape_name("testtest.test").len(), 8);
     }
 
     #[test]
@@ -446,7 +470,7 @@ mod test {
             record_in: tc_1,
             record_out: tc_2,
         };
-        let cut = Edit::Cut(clip_1.clone());
+        let cut = &Edit::Cut(clip_1.clone());
         let cut_string: String = cut.try_into().unwrap();
         let cut_cmp: String = "
 001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
@@ -454,7 +478,7 @@ mod test {
             .into();
         assert_eq!(cut_string, cut_cmp);
 
-        let wipe = Edit::Wipe(Wipe {
+        let wipe = &Edit::Wipe(Wipe {
             from: clip_1.clone(),
             to: clip_2.clone(),
             edit_duration_frames: 15,
@@ -469,7 +493,7 @@ mod test {
             .into();
         assert_eq!(wipe_string, wipe_cmp);
 
-        let dissove = Edit::Dissolve(Dissolve {
+        let dissove = &Edit::Dissolve(Dissolve {
             from: clip_1.clone(),
             to: clip_2.clone(),
             edit_duration_frames: 0,
@@ -484,3 +508,6 @@ mod test {
         assert_eq!(dissolve_string, dissove_cmp);
     }
 }
+
+#[cfg(test)]
+pub mod deserialize_clip;

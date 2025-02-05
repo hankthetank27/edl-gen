@@ -162,7 +162,7 @@ impl App {
     fn config_driver_type(&mut self, ui: &mut Ui) {
         let current_host_name = self.opt.ltc_host.id().get_name();
         egui::ComboBox::from_label("Audio Driver")
-            .selected_text(current_host_name.to_string())
+            .selected_text(current_host_name.trim_with_ellipsis())
             .show_ui(ui, |ui| {
                 for host_id in self.opt.ltc_hosts.iter() {
                     let host: cpal::Host = LTCHostId::new(*host_id).into();
@@ -193,7 +193,7 @@ impl App {
     fn config_input_device(&mut self, ui: &mut Ui) {
         let current_device_name = self.opt.ltc_device.as_ref().get_name();
         egui::ComboBox::from_label("Audio Device")
-            .selected_text(current_device_name.to_string())
+            .selected_text(current_device_name.trim_with_ellipsis())
             .show_ui(ui, |ui| match &self.opt.ltc_devices {
                 Some(devices) => {
                     for new_device in devices.iter() {
@@ -476,3 +476,35 @@ impl Name for Option<&LTCDevice> {
         })
     }
 }
+
+trait Trim {
+    fn trim_with_ellipsis(&self) -> String;
+}
+
+impl Trim for str {
+    fn trim_with_ellipsis(&self) -> String {
+        let max = 30;
+        if self.len() >= max {
+            format!("{}...", self.get(0..(max - 3)).unwrap())
+        } else {
+            self.to_string()
+        }
+    }
+}
+
+// #[cfg(test)]
+// mod test {
+//     use super::*;
+//     use egui_kittest::Harness;
+
+//     fn make_app() {
+//         let ctx = egui::Context::default();
+//         // let ui = egui::UiBuilder::new();
+//         //
+//         // let mut harness = Harness::builder().build_eframe(|cc| App::default());
+
+//         // let mut harness = HarnessBuilder::default().build_ui(|ui| {
+//         //     let app = App::default();
+//         // });
+//     }
+// }

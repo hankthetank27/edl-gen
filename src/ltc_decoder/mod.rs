@@ -6,7 +6,7 @@ use ltc::{LTCDecoder, LTCFrame};
 use num_traits::cast::AsPrimitive;
 use vtc::{FramerateParseError, Timecode, TimecodeParseError};
 
-use std::{collections::VecDeque, sync::mpsc, thread};
+use std::{collections::VecDeque, sync::mpsc, thread, time::Duration};
 
 use crate::{
     ltc_decoder::config::{Device, LTCDevice},
@@ -270,6 +270,13 @@ impl DecodeHandlers {
         Ok(self.rx_ltc_frame.recv()?.into_timecode(&self.opt)?)
     }
 
+    pub fn recv_frame_timeout(&self, timeout: Duration) -> Result<Timecode, DecodeErr> {
+        Ok(self
+            .rx_ltc_frame
+            .recv_timeout(timeout)?
+            .into_timecode(&self.opt)?)
+    }
+
     pub fn decode_on(&self) -> Result<(), Error> {
         self.tx_decode_state
             .send(DecodeState::On)
@@ -291,7 +298,8 @@ impl DecodeHandlers {
 
 #[derive(Debug)]
 pub enum DecodeErr {
-    NoVal(String),
+    Timedout,
+    NoVal,
     Anyhow(String),
 }
 
@@ -300,7 +308,11 @@ impl std::error::Error for DecodeErr {}
 impl std::fmt::Display for DecodeErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeErr::NoVal(m) | DecodeErr::Anyhow(m) => write!(f, "{}", m),
+            DecodeErr::Anyhow(m) => {
+                write!(f, "{}", m)
+            }
+            DecodeErr::NoVal => write!(f, "No LTC value available"),
+            DecodeErr::Timedout => write!(f, "Decode timed out "),
         }
     }
 }
@@ -315,7 +327,8 @@ impl From<ChannelErr> for DecodeErr {
     fn from(value: ChannelErr) -> Self {
         match value {
             ChannelErr::Lock => DecodeErr::Anyhow(value.to_string()),
-            ChannelErr::NoVal => DecodeErr::NoVal(value.to_string()),
+            ChannelErr::NoVal => DecodeErr::NoVal,
+            ChannelErr::Timedout => DecodeErr::Timedout,
         }
     }
 }
