@@ -27,7 +27,7 @@ impl TryFrom<&EditRequestData> for EditData {
                 .context("Source tape required")?,
             edit_duration_frames: edit_req.edit_duration_frames,
             wipe_num: edit_req.wipe_num.or(Some(1)),
-            av_channels: edit_req.av_channels,
+            av_channels: edit_req.av_channels.context("AV channels required")?,
             edit_type,
         })
     }
@@ -58,7 +58,7 @@ impl FrameQueue {
             Some(front) => front.source_tape.to_owned(),
             None => edit_data.source_tape.to_owned(),
         };
-        let record = FrameData::try_from_edit(edit_data, prev_tape, timecode, self.count + 1)?;
+        let record = FrameData::try_from_edit(edit_data, prev_tape, timecode, self.count)?;
         self.count += 1;
         self.log.push_back(record);
         Ok(())
@@ -188,7 +188,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("test_1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         let tc_2 = Timecode::with_frames("01:00:10:00", vtc::rates::F24).unwrap();
         let req_2 = EditRequestData {
@@ -196,7 +196,7 @@ mod test {
             edit_duration_frames: Some(1),
             wipe_num: Some(1),
             source_tape: Some("test_2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(queue.push(tc_1, &req_1).is_ok());
         assert!(queue.push(tc_2, &req_2).is_ok());
@@ -212,7 +212,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("test_1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(queue.push(tc_1, &req_1).is_ok());
 
@@ -222,7 +222,7 @@ mod test {
             edit_duration_frames: None, //invalid
             wipe_num: Some(1),
             source_tape: Some("test_2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(!queue.push(tc_2, &req_2).is_ok());
 
@@ -232,7 +232,7 @@ mod test {
             edit_duration_frames: Some(1),
             wipe_num: None, //invalid but...
             source_tape: Some("test_3".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(queue.push(tc_3, &req_3).is_ok());
         assert_eq!(queue.log.back().unwrap().wipe_num, Some(1)); // We got to default value
@@ -243,7 +243,7 @@ mod test {
             edit_duration_frames: Some(1), //ignored
             wipe_num: None,
             source_tape: Some("test_4".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(queue.push(tc_4, &req_4).is_ok());
 
@@ -253,7 +253,7 @@ mod test {
             edit_duration_frames: Some(1),
             wipe_num: None, //invalid
             source_tape: Some("test_5".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(!queue.push(tc_5, &req_5).is_ok());
 
@@ -263,7 +263,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None, //invalid
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(!queue.push(tc_6, &req_6).is_ok());
 
@@ -273,7 +273,7 @@ mod test {
             edit_duration_frames: Some(1), //ignored
             wipe_num: Some(1),             //ignored
             source_tape: Some("test_1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         };
         assert!(queue.push(tc_7, &req_7).is_ok());
 

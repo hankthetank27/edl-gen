@@ -144,7 +144,7 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
             )
         };
 
-        match &value.in_.edit_type {
+        match &value.out_.edit_type {
             EditType::Cut => {
                 let to = value.as_edit_dest_clip();
                 Ok(Edit::Cut(to))
@@ -156,7 +156,7 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
 
                 Ok(Edit::Dissolve(Dissolve {
                     edit_duration_frames: value
-                        .in_
+                        .out_
                         .edit_duration_frames
                         .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
                     from,
@@ -170,7 +170,7 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
 
                 Ok(Edit::Wipe(Wipe {
                     edit_duration_frames: value
-                        .in_
+                        .out_
                         .edit_duration_frames
                         .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
                     from,
@@ -194,9 +194,9 @@ impl<'a> FrameDataPair<'a> {
 
     pub fn as_edit_dest_clip(&self) -> Clip {
         Clip {
-            edit_number: self.in_.edit_number,
+            edit_number: self.out_.edit_number,
             source_tape: self.in_.source_tape.clone(),
-            av_channels: self.in_.av_channels,
+            av_channels: self.out_.av_channels,
             source_in: self.in_.timecode,
             source_out: self.out_.timecode,
             record_in: self.in_.timecode,
@@ -257,23 +257,27 @@ impl TryFrom<&Edit> for String {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct AVChannels {
     video: bool,
     audio: u8,
 }
 
+impl AVChannels {
+    pub fn new(video: bool, audio: u8) -> Self {
+        Self { video, audio }
+    }
+}
+
 impl Default for AVChannels {
     fn default() -> Self {
-        AVChannels {
-            video: true,
-            audio: 2,
-        }
+        AVChannels::new(true, 2)
     }
 }
 
 impl From<AVChannels> for String {
     fn from(value: AVChannels) -> Self {
-        (1..value.audio + 1).fold(
+        (1..=std::cmp::min(value.audio, 4)).fold(
             if value.video { "V" } else { "" }.to_string(),
             |acc, curr| format!("{acc}A{curr}"),
         )
@@ -354,8 +358,8 @@ impl EdlEditLine {
         Ok(EdlEditLine {
             edit_number: validate_num_size(clip.edit_number as u32)?,
             //TODO: need name validation
-            source_tape: trim_tape_name(&clip.source_tape),
-            av_channels: clip.av_channels.into(),
+            source_tape: postfix_spaces(&trim_tape_name(&clip.source_tape), 8),
+            av_channels: postfix_spaces(&String::from(clip.av_channels), 9),
             source_in: clip.source_in.timecode(),
             source_out: clip.source_out.timecode(),
             record_in: clip.record_in.timecode(),
@@ -369,7 +373,7 @@ impl EdlEditLine {
 impl From<EdlEditLine> for String {
     fn from(value: EdlEditLine) -> Self {
         format!(
-            "{}   {}   {}   {} {} {} {} {} {}",
+            "{}  {} {} {} {} {} {} {} {}",
             value.edit_number,
             value.source_tape,
             value.av_channels,
@@ -385,6 +389,12 @@ impl From<EdlEditLine> for String {
 
 fn trim_tape_name(tape: &str) -> String {
     tape.chars().take(8).collect()
+}
+
+fn postfix_spaces(string: &str, len: usize) -> String {
+    let spaces = String::from_utf8(vec![b' '; std::cmp::max(len - string.len(), 0)])
+        .unwrap_or_else(|_| "".to_string());
+    format!("{string}{spaces}")
 }
 
 // TODO: this should handle edit duration seperately
@@ -418,6 +428,13 @@ mod test {
             String::from(AVChannels {
                 video: true,
                 audio: 4
+            }),
+            "VA1A2A3A4".to_string()
+        );
+        assert_eq!(
+            String::from(AVChannels {
+                video: true,
+                audio: 10
             }),
             "VA1A2A3A4".to_string()
         );
@@ -473,7 +490,7 @@ mod test {
         let cut = &Edit::Cut(clip_1.clone());
         let cut_string: String = cut.try_into().unwrap();
         let cut_cmp: String = "
-001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+001  test_cli VA1A2     C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
 * FROM CLIP NAME: test_clip.mov"
             .into();
         assert_eq!(cut_string, cut_cmp);
@@ -486,8 +503,8 @@ mod test {
         });
         let wipe_string: String = wipe.try_into().unwrap();
         let wipe_cmp: String = "
-001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
-002   test_cli   VA1A2   W001 015 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
+001  test_cli VA1A2     C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+002  test_cli VA1A2     W001 015 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
 * FROM CLIP NAME: test_clip.mov
 * TO CLIP NAME: test_clip_2.mov"
             .into();
@@ -500,8 +517,8 @@ mod test {
         });
         let dissolve_string: String = dissove.try_into().unwrap();
         let dissove_cmp: String = "
-001   test_cli   VA1A2   C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
-002   test_cli   VA1A2   D    000 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
+001  test_cli VA1A2     C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+002  test_cli VA1A2     D    000 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
 * FROM CLIP NAME: test_clip.mov
 * TO CLIP NAME: test_clip_2.mov"
             .into();

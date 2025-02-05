@@ -12,6 +12,7 @@ use crate::{
     test::{cpal_device::MockDevice, state::test_opt},
 };
 use std::{
+    net::TcpListener,
     sync::{mpsc, Arc},
     thread,
     time::Duration,
@@ -19,13 +20,22 @@ use std::{
 
 struct TestServer {
     device: MockDevice,
-    port: usize,
+    port: u16,
     tx_stop_serv: mpsc::Sender<()>,
 }
 
+fn get_available_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
 impl TestServer {
-    fn new(port: usize, file_name: String) -> Self {
-        let opt = test_opt(port, file_name);
+    fn new(file_name: String) -> Self {
+        let port = get_available_port();
+        let opt = test_opt(port.into(), file_name);
         let device = opt.ltc_device.as_ref().unwrap().device.clone();
 
         Logger::init(&Context::default());
@@ -40,7 +50,7 @@ impl TestServer {
                 .listen(rx_stop_serv, tx_serv_stopped, decode_handlers, opt)
                 .unwrap();
         });
-        thread::sleep(Duration::from_millis(300));
+        wait_for_server(port);
 
         Self {
             device,
@@ -50,7 +60,18 @@ impl TestServer {
     }
 }
 
-fn wait_for_rdy(port: usize) {
+fn wait_for_server(port: u16) {
+    let addr = format!("127.0.0.1:{}", port);
+    for _ in 0..100 {
+        if std::net::TcpStream::connect(&addr).is_ok() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("Server did not start on {}", addr);
+}
+
+fn wait_for_rdy(port: u16) {
     let check_rdy = || {
         let res = minreq::get(format!("http://127.0.0.1:{port}/edl-recording-state"))
             .with_header("Content-Type", "application/json")
@@ -123,18 +144,15 @@ fn test_basic_edit_events() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(6670, "test_basic_edit_events".to_string());
+    } = TestServer::new("test_basic_edit_events".to_string());
 
     device.tx_start_playing.send(()).unwrap();
 
     let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::new(false, 0)),
         }))
         .send()
         .unwrap();
@@ -151,13 +169,14 @@ fn test_basic_edit_events() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
     assert_eq!(cut_1_res.status_code, 200);
     assert_eq!(cut_1_res.rec_state(), EdlRecordingState::Started);
     assert_eq!(cut_1_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(cut_1_res.cut().av_channels, AVChannels::new(true, 2));
 
     let cut_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
         .with_header("Content-Type", "application/json")
@@ -166,13 +185,14 @@ fn test_basic_edit_events() {
             edit_duration_frames: Some(1), // ignored
             wipe_num: Some(1),             // ignored
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
     assert_eq!(cut_2_res.status_code, 200);
     assert_eq!(cut_2_res.rec_state(), EdlRecordingState::Started);
     assert_eq!(cut_2_res.cut().source_tape, "tape2".to_string());
+    assert_eq!(cut_2_res.cut().av_channels, AVChannels::new(true, 2));
 
     let wipe_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
         .with_header("Content-Type", "application/json")
@@ -181,13 +201,14 @@ fn test_basic_edit_events() {
             edit_duration_frames: Some(20),
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::new(false, 3)),
         }))
         .send()
         .unwrap();
     assert_eq!(wipe_1_res.status_code, 200);
     assert_eq!(wipe_1_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_1_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(wipe_1_res.wipe().to.source_tape, "tape1".to_string());
+    assert_eq!(wipe_1_res.wipe().to.av_channels, AVChannels::new(false, 3));
 
     let dis_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
         .with_header("Content-Type", "application/json")
@@ -196,14 +217,18 @@ fn test_basic_edit_events() {
             edit_duration_frames: Some(10),
             wipe_num: None,
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
     assert_eq!(dis_1_res.status_code, 200);
     assert_eq!(dis_1_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(dis_1_res.wipe().from.source_tape, "tape1".to_string());
-    assert_eq!(dis_1_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(dis_1_res.dissolve().from.source_tape, "tape1".to_string());
+    assert_eq!(dis_1_res.dissolve().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        dis_1_res.dissolve().to.av_channels,
+        AVChannels::new(true, 2)
+    );
 
     let end_res = minreq::post(format!("http://127.0.0.1:{port}/end"))
         .with_header("Content-Type", "application/json")
@@ -212,14 +237,14 @@ fn test_basic_edit_events() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::new(true, 4)),
         }))
         .send()
         .unwrap();
     assert_eq!(end_res.status_code, 200);
     assert_eq!(end_res.rec_state(), EdlRecordingState::Stopped);
-    assert_eq!(end_res.dissolve().from.source_tape, "tape2".to_string());
-    assert_eq!(end_res.dissolve().to.source_tape, "tape1".to_string());
+    assert_eq!(end_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(end_res.cut().av_channels, AVChannels::new(true, 4));
 
     tx_stop_serv.send(()).unwrap();
 }
@@ -230,7 +255,7 @@ fn test_event_failures() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(7231, "test_event_failures".to_string());
+    } = TestServer::new("test_event_failures".to_string());
 
     device.tx_start_playing.send(()).unwrap();
 
@@ -241,7 +266,7 @@ fn test_event_failures() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -255,12 +280,9 @@ fn test_event_failures() {
 
     let invalid_edit_type = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "swipe".into(), //invalid
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -281,16 +303,13 @@ fn test_wait_for_ltc_on_start() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(6908, "test_wait_for_ltc_on_start".to_string());
+    } = TestServer::new("test_wait_for_ltc_on_start".to_string());
 
     let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -304,7 +323,7 @@ fn test_wait_for_ltc_on_start() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -321,7 +340,7 @@ fn test_wait_for_ltc_on_start() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -337,14 +356,15 @@ fn test_edit_events_with_preselected_src() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(7899, "test_edit_events_with_preselected_src".to_string());
+    } = TestServer::new("test_edit_events_with_preselected_src".to_string());
 
     device.tx_start_playing.send(()).unwrap();
 
     let src_res = minreq::post(format!("http://127.0.0.1:{port}/select-src"))
         .with_header("Content-Type", "application/json")
         .with_body(serde_src(SourceTapeRequestData {
-            source_tape: "tape1".into(),
+            source_tape: Some("tape1".into()),
+            av_channels: None,
         }))
         .send()
         .unwrap();
@@ -352,12 +372,9 @@ fn test_edit_events_with_preselected_src() {
 
     let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -373,7 +390,7 @@ fn test_edit_events_with_preselected_src() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -387,7 +404,7 @@ fn test_edit_events_with_preselected_src() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -404,17 +421,10 @@ fn test_select_src_while_waiting() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(5271, name.to_string());
+    } = TestServer::new(name.to_string());
 
     let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
-            source_tape: None,
-            av_channels: AVChannels::default(),
-        }))
         .send()
         .unwrap();
     assert_eq!(start_res.status_code, 202);
@@ -427,7 +437,7 @@ fn test_select_src_while_waiting() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape2".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -442,7 +452,7 @@ fn test_select_src_while_waiting() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -451,12 +461,9 @@ fn test_select_src_while_waiting() {
 
     let start_res = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -471,7 +478,7 @@ fn test_select_src_while_waiting() {
                 edit_duration_frames: None,
                 wipe_num: None,
                 source_tape: None,
-                av_channels: AVChannels::default(),
+                av_channels: Some(AVChannels::default()),
             }))
             .send()
             .unwrap();
@@ -482,7 +489,8 @@ fn test_select_src_while_waiting() {
     let src_res = minreq::post(format!("http://127.0.0.1:{port}/select-src"))
         .with_header("Content-Type", "application/json")
         .with_body(serde_src(SourceTapeRequestData {
-            source_tape: "tape1".into(),
+            source_tape: Some("tape1".into()),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -500,7 +508,7 @@ fn test_select_src_while_waiting() {
                 edit_duration_frames: None,
                 wipe_num: None,
                 source_tape: None,
-                av_channels: AVChannels::default(),
+                av_channels: Some(AVChannels::default()),
             }))
             .send()
             .unwrap();
@@ -511,7 +519,8 @@ fn test_select_src_while_waiting() {
     let src_res = minreq::post(format!("http://127.0.0.1:{port}/select-src"))
         .with_header("Content-Type", "application/json")
         .with_body(serde_src(SourceTapeRequestData {
-            source_tape: "tape2".into(),
+            source_tape: Some("tape2".into()),
+            av_channels: None,
         }))
         .send()
         .unwrap();
@@ -526,7 +535,7 @@ fn test_select_src_while_waiting() {
                 edit_duration_frames: None,
                 wipe_num: None,
                 source_tape: None,
-                av_channels: AVChannels::default(),
+                av_channels: Some(AVChannels::default()),
             }))
             .send()
             .unwrap();
@@ -541,7 +550,7 @@ fn test_select_src_while_waiting() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -557,7 +566,7 @@ fn test_event_non_ready() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(7271, "test_event_non_ready".to_string());
+    } = TestServer::new("test_event_non_ready".to_string());
 
     device.tx_start_playing.send(()).unwrap();
 
@@ -568,7 +577,7 @@ fn test_event_non_ready() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -577,12 +586,9 @@ fn test_event_non_ready() {
 
     let start_before_src = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -591,7 +597,8 @@ fn test_event_non_ready() {
     minreq::post(format!("http://127.0.0.1:{port}/select-src"))
         .with_header("Content-Type", "application/json")
         .with_body(serde_src(SourceTapeRequestData {
-            source_tape: "tape1".into(),
+            source_tape: Some("tape1".into()),
+            av_channels: None,
         }))
         .send()
         .unwrap();
@@ -603,7 +610,7 @@ fn test_event_non_ready() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -617,7 +624,7 @@ fn test_event_non_ready() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -626,12 +633,9 @@ fn test_event_non_ready() {
 
     let start_after_src = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -645,7 +649,7 @@ fn test_event_non_ready() {
             edit_duration_frames: None,
             wipe_num: None,
             source_tape: Some("tape1".into()),
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -662,24 +666,22 @@ fn test_event_repeats() {
         device,
         port,
         tx_stop_serv,
-    } = TestServer::new(3273, name.to_string());
+    } = TestServer::new(name.to_string());
 
     minreq::post(format!("http://127.0.0.1:{port}/select-src"))
         .with_header("Content-Type", "application/json")
         .with_body(serde_src(SourceTapeRequestData {
-            source_tape: "tape1".into(),
+            source_tape: Some("tape1".into()),
+            av_channels: None,
         }))
         .send()
         .unwrap();
 
     let start_1 = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -688,12 +690,9 @@ fn test_event_repeats() {
 
     let start_2 = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -702,12 +701,9 @@ fn test_event_repeats() {
 
     let start_3 = minreq::post(format!("http://127.0.0.1:{port}/start"))
         .with_header("Content-Type", "application/json")
-        .with_body(serde_edit(EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
+        .with_body(serde_src(SourceTapeRequestData {
             source_tape: None,
-            av_channels: AVChannels::default(),
+            av_channels: Some(AVChannels::default()),
         }))
         .send()
         .unwrap();
@@ -722,7 +718,7 @@ fn test_event_repeats() {
                 edit_duration_frames: None,
                 wipe_num: None,
                 source_tape: Some(i.to_string()),
-                av_channels: AVChannels::default(),
+                av_channels: Some(AVChannels::default()),
             }))
             .send()
             .unwrap();
@@ -741,7 +737,7 @@ fn test_event_repeats() {
                 edit_duration_frames: None,
                 wipe_num: None,
                 source_tape: Some(i.to_string()),
-                av_channels: AVChannels::default(),
+                av_channels: Some(AVChannels::default()),
             }))
             .send()
             .unwrap();
