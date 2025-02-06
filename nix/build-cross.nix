@@ -51,12 +51,14 @@ prefixCross (
         cargo = rsCrossToolchain;
         rustc = rsCrossToolchain;
       };
+      cargoToml = lib.importTOML ../Cargo.toml;
     in
     with pkgsCross;
     naersk'.buildPackage (rec {
       src = ../.;
       strictDeps = true;
       CARGO_BUILD_TARGET = rustTarget;
+      version = cargoToml.workspace.package.version;
 
       nativeBuildInputs = [ ] ++ lib.optionals stdenv.hostPlatform.isLinux [ pkg-config ];
 
