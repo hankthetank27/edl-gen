@@ -145,15 +145,11 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
         };
 
         match &value.in_.edit_type {
-            EditType::Cut => {
-                let from = value.as_dest_clip();
-                Ok(Edit::Cut(from))
-            }
+            EditType::Cut => Ok(Edit::Cut(value.as_dest_clip())),
 
             e @ EditType::Dissolve => {
                 let from = value.as_prev_clip_flat();
                 let to = value.as_dest_clip();
-
                 Ok(Edit::Dissolve(Dissolve {
                     edit_duration_frames: value
                         .in_
@@ -167,7 +163,6 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
             e @ EditType::Wipe => {
                 let from = value.as_prev_clip_flat();
                 let to = value.as_dest_clip();
-
                 Ok(Edit::Wipe(Wipe {
                     edit_duration_frames: value
                         .in_
@@ -200,9 +195,9 @@ impl<'a> FrameDataPair<'a> {
             edit_number: self.in_.edit_number,
             av_channels: self.in_.av_channels,
             source_in: self.in_.timecode,
-            source_out: self.out_.timecode,
+            source_out: self.tc_out_with_edit_duration_if_greater(),
             record_in: self.in_.timecode,
-            record_out: self.out_.timecode,
+            record_out: self.tc_out_with_edit_duration_if_greater(),
         }
     }
 
@@ -231,6 +226,18 @@ impl<'a> FrameDataPair<'a> {
                 };
                 ("BL".to_string(), source_tape_cmt.into())
             })
+    }
+
+    fn tc_out_with_edit_duration_if_greater(&self) -> Timecode {
+        self.in_
+            .edit_duration_frames
+            .and_then(|frames| {
+                let tc_with_duration = Timecode::with_frames(frames, self.in_.timecode.rate())
+                    .ok()?
+                    + self.in_.timecode;
+                Some(tc_with_duration.max(self.out_.timecode))
+            })
+            .unwrap_or(self.out_.timecode)
     }
 }
 
@@ -515,6 +522,7 @@ mod test {
     fn edit_req_into() {
         let tc_1 = Timecode::with_frames("01:00:00:00", rates::F24).unwrap();
         let tc_2 = Timecode::with_frames("01:05:10:00", rates::F24).unwrap();
+        let tc_3 = Timecode::with_frames("01:05:10:05", rates::F24).unwrap();
         let frame_in = FrameData {
             edit_number: 1,
             edit_type: EditType::Dissolve,
@@ -550,8 +558,15 @@ mod test {
             edit.dissolve().to.source_tape_cmt,
             "tape_1 with long name".to_string()
         );
-        assert!(edit.dissolve().from.source_in == edit.dissolve().from.source_out);
+        assert_eq!(
+            edit.dissolve().from.source_in,
+            edit.dissolve().from.source_out
+        );
         assert!(edit.dissolve().to.source_in < edit.dissolve().to.source_out);
+        assert_eq!(edit.dissolve().to.source_in, tc_1);
+        assert_eq!(edit.dissolve().to.source_out, tc_2);
+        assert_eq!(edit.dissolve().from.source_in, tc_1);
+        assert_eq!(edit.dissolve().from.source_out, tc_1);
 
         let frame_in = FrameData {
             edit_number: 1,
@@ -582,8 +597,12 @@ mod test {
         assert_eq!(edit.wipe().from.source_tape_cmt, "tape0".to_string());
         assert_eq!(edit.wipe().to.source_tape, "tape1".to_string());
         assert_eq!(edit.wipe().to.source_tape_cmt, "tape1".to_string());
-        assert!(edit.wipe().from.source_in == edit.wipe().from.source_out);
+        assert_eq!(edit.wipe().from.source_in, edit.wipe().from.source_out);
         assert!(edit.wipe().to.source_in < edit.wipe().to.source_out);
+        assert_eq!(edit.wipe().to.source_in, tc_1);
+        assert_eq!(edit.wipe().to.source_out, tc_2);
+        assert_eq!(edit.wipe().from.source_in, tc_1);
+        assert_eq!(edit.wipe().from.source_out, tc_1);
 
         let frame_in = FrameData {
             edit_number: 1,
@@ -592,8 +611,8 @@ mod test {
             prev_tape: None,
             av_channels: AVChannels::default(),
             prev_av_channels: AVChannels::default(),
-            timecode: tc_1,
-            edit_duration_frames: Some(10),
+            timecode: tc_2,
+            edit_duration_frames: None,
             wipe_num: Some(1),
         };
         let frame_out = FrameData {
@@ -603,7 +622,7 @@ mod test {
             prev_tape: Some("tape_1".into()),
             av_channels: AVChannels::default(),
             prev_av_channels: AVChannels::default(),
-            timecode: tc_2,
+            timecode: tc_3,
             edit_duration_frames: None,
             wipe_num: None,
         };
@@ -613,12 +632,57 @@ mod test {
         assert_eq!(edit.cut().source_tape, "tape_1".to_string());
         assert_eq!(edit.cut().source_tape_cmt, "tape_1".to_string());
         assert!(edit.cut().source_in < edit.cut().source_out);
+        assert_eq!(edit.cut().source_in, tc_2);
+        assert_eq!(edit.cut().source_out, tc_3);
+
+        // with edit duration longer than edit time
+        let frame_in = FrameData {
+            edit_number: 1,
+            edit_type: EditType::Wipe,
+            source_tape: Some("tape1".into()),
+            prev_tape: Some("tape0".into()),
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_2,
+            edit_duration_frames: Some(10),
+            wipe_num: Some(1),
+        };
+        let frame_out = FrameData {
+            edit_number: 2,
+            edit_type: EditType::Dissolve,
+            source_tape: Some("tape2".into()),
+            prev_tape: Some("tape4".into()),
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_3,
+            edit_duration_frames: None,
+            wipe_num: None,
+        };
+        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+            .try_into()
+            .unwrap();
+        assert_eq!(edit.wipe().from.source_tape, "tape0".to_string());
+        assert_eq!(edit.wipe().from.source_tape_cmt, "tape0".to_string());
+        assert_eq!(edit.wipe().to.source_tape, "tape1".to_string());
+        assert_eq!(edit.wipe().to.source_tape_cmt, "tape1".to_string());
+        assert_eq!(edit.wipe().from.source_in, edit.wipe().from.source_out);
+        assert!(edit.wipe().to.source_in < edit.wipe().to.source_out);
+        assert_eq!(edit.wipe().from.source_in, tc_2);
+        assert_eq!(edit.wipe().from.source_out, tc_2);
+        assert_eq!(edit.wipe().to.source_in, tc_2);
+        assert_eq!(
+            edit.wipe().to.source_out,
+            tc_2 + Timecode::with_frames(frame_in.edit_duration_frames.unwrap(), rates::F24)
+                .unwrap()
+        );
     }
 
     #[test]
     fn validate_edit() {
         let tc_1 = Timecode::with_frames("01:00:00:00", rates::F24).unwrap();
         let tc_2 = Timecode::with_frames("01:05:10:00", rates::F24).unwrap();
+        let tc_3 = Timecode::with_frames("01:10:00:00", rates::F24).unwrap();
+        let tc_4 = Timecode::with_frames("01:15:00:00", rates::F24).unwrap();
         let clip_1 = Clip {
             edit_number: 1,
             source_tape: trim_tape_name("test_clip.mov".into()),
@@ -629,19 +693,17 @@ mod test {
             record_in: tc_1,
             record_out: tc_2,
         };
-
-        let tc_1 = Timecode::with_frames("01:10:00:00", rates::F24).unwrap();
-        let tc_2 = Timecode::with_frames("01:15:00:00", rates::F24).unwrap();
         let clip_2 = Clip {
             edit_number: 2,
             source_tape: trim_tape_name("test_clip_2.mov".into()),
             source_tape_cmt: "test_clip_2.mov".into(),
             av_channels: AVChannels::default(),
-            source_in: tc_1,
-            source_out: tc_2,
-            record_in: tc_1,
-            record_out: tc_2,
+            source_in: tc_3,
+            source_out: tc_4,
+            record_in: tc_3,
+            record_out: tc_4,
         };
+
         let cut = &Edit::Cut(clip_1.clone());
         let cut_string: String = cut.try_into().unwrap();
         let cut_cmp: String = "

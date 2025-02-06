@@ -145,6 +145,7 @@ enum EdlRecordingState {
     Waiting,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum EditBody {
     Edit(Edit),
     Edits(Vec<Edit>),
