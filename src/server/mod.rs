@@ -14,6 +14,7 @@ use std::{
     thread,
 };
 
+use crate::edl_writer::frame_queue::EditType;
 use crate::{
     edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair},
     ltc_decoder::{DecodeErr, DecodeHandlers},
@@ -25,7 +26,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(port: &usize) -> Self {
+    pub fn new(port: u16) -> Self {
         Server {
             host: format!("127.0.0.1:{}", port),
         }
@@ -144,18 +145,31 @@ enum EdlRecordingState {
     Waiting,
 }
 
-#[derive(Serialize, Debug)]
-#[cfg_attr(test, derive(Deserialize))]
-struct ResBodyRecStatus {
-    recording_status: EdlRecordingState,
-    edit: Option<Edit>,
+enum EditBody {
+    Edit(Edit),
+    Edits(Vec<Edit>),
 }
 
-impl ResBodyRecStatus {
-    fn new(recording_status: EdlRecordingState, edit: Option<Edit>) -> Self {
-        ResBodyRecStatus {
+#[derive(Serialize, Debug)]
+#[cfg_attr(test, derive(Deserialize))]
+struct ResBody {
+    recording_status: EdlRecordingState,
+    edit: Option<Edit>,
+    final_edits: Option<Vec<Edit>>,
+}
+
+impl ResBody {
+    fn new(recording_status: EdlRecordingState, edit_or_edits: Option<EditBody>) -> Self {
+        let (edit, final_edits) = edit_or_edits
+            .map(|eb| match eb {
+                EditBody::Edit(e) => (Some(e), None),
+                EditBody::Edits(es) => (None, Some(es)),
+            })
+            .unwrap_or((None, None));
+        ResBody {
             recording_status,
             edit,
+            final_edits,
         }
     }
 }
@@ -221,7 +235,7 @@ impl<'req> Request<'req> {
             },
             Some("GET") => match self.path {
                 Some("/edl-recording-state") => {
-                    ResBodyRecStatus::new(ctx.lock().rec_state, None).try_into_200()
+                    ResBody::new(ctx.lock().rec_state, None).try_into_200()
                 }
                 Some("/SIGKILL") => Ok(kill_server()),
                 _ => Ok(not_found()),
@@ -241,11 +255,11 @@ impl<'req> Request<'req> {
                 ctx_guard.frame_queue.clear();
                 ctx_guard.edl = Some(Edl::new(&ctx_guard.opt)?);
 
-                let mut edit_req: EditRequestData = self
+                let mut edit_req = self
                     .body()?
-                    .unwrap_or_else(|| ReqBody::Source(SourceTapeRequestData::default()))
-                    .expect_source()?
-                    .into();
+                    .context("Request does not contain a body")?
+                    .expect_edit()?;
+
                 edit_req
                     .try_start_now(&mut ctx_guard)
                     .and_then(|res| res.try_into_200().map_err(StartErr::Anyhow))
@@ -253,14 +267,14 @@ impl<'req> Request<'req> {
                         StartErr::Timeout => {
                             let ctx_send = Arc::clone(ctx);
                             ctx_guard.tx_ltc_wait_worker.send((edit_req, ctx_send))?;
-                            ResBodyRecStatus::new(ctx_guard.rec_state, None).try_into_202()
+                            ResBody::new(ctx_guard.rec_state, None).try_into_202()
                         }
                         StartErr::Anyhow(e) => Err(e),
                     })
             }
             s @ EdlRecordingState::Started | s @ EdlRecordingState::Waiting => {
                 log::warn!("Recording has already started. You cannot start in this state.");
-                ResBodyRecStatus::new(s, None).try_into_202()
+                ResBody::new(s, None).try_into_202()
             }
         }
     }
@@ -272,7 +286,7 @@ impl<'req> Request<'req> {
                 ctx_guard.set_rec_state(EdlRecordingState::Waiting);
                 log::info!("Ending recording...");
 
-                let edit = self
+                let edits = self
                     .body()?
                     .context("Request does not contain a body")?
                     .expect_edit()?
@@ -282,18 +296,18 @@ impl<'req> Request<'req> {
                 let rec_state = ctx_guard.set_rec_state(EdlRecordingState::Stopped);
                 log::info!("EDL recording ended");
 
-                ResBodyRecStatus::new(rec_state, Some(edit)).try_into_200()
+                ResBody::new(rec_state, Some(EditBody::Edits(edits))).try_into_200()
             }
             EdlRecordingState::Waiting => {
                 log::info!("Ending recording...");
                 ctx_guard.decode_handlers.decode_off()?;
                 let rec_state = ctx_guard.set_rec_state(EdlRecordingState::Stopped);
                 log::info!("EDL recording ended");
-                ResBodyRecStatus::new(rec_state, None).try_into_200()
+                ResBody::new(rec_state, None).try_into_200()
             }
             s @ EdlRecordingState::Stopped => {
                 log::warn!("Recording not yet started!");
-                ResBodyRecStatus::new(s, None).try_into_202()
+                ResBody::new(s, None).try_into_202()
             }
         }
     }
@@ -309,7 +323,7 @@ impl<'req> Request<'req> {
                 .try_into_200(),
             s @ EdlRecordingState::Stopped | s @ EdlRecordingState::Waiting => {
                 log::warn!("Recording not yet started!");
-                ResBodyRecStatus::new(s, None).try_into_202()
+                ResBody::new(s, None).try_into_202()
             }
         }
     }
@@ -397,41 +411,55 @@ enum StartErr {
 }
 
 impl EditRequestData {
-    fn try_log_edit(
-        &mut self,
-        ctx_guard: &mut MutexGuard<ContextInner>,
-    ) -> Result<ResBodyRecStatus, Error> {
-        self.build_edit_from_current_and_prev(ctx_guard)
-            .context("Could not log edit")
-            .and_then(|edit| {
-                let edit: Edit = ctx_guard
-                    .edl
-                    .as_mut()
-                    .context("EDL file does not exist")?
-                    .write_from_edit(edit)?;
-                Ok(ResBodyRecStatus::new(
-                    EdlRecordingState::Started,
-                    Some(edit),
-                ))
-            })
+    fn blank_frame() -> Self {
+        EditRequestData {
+            edit_type: "cut".into(),
+            edit_duration_frames: None,
+            wipe_num: None,
+            source_tape: None,
+            av_channels: None,
+        }
+    }
+
+    fn try_log_edit(&mut self, ctx_guard: &mut MutexGuard<ContextInner>) -> Result<ResBody, Error> {
+        Ok(ResBody::new(
+            EdlRecordingState::Started,
+            Some(EditBody::Edit(self.write_edit_to_edl(ctx_guard)?)),
+        ))
     }
 
     fn try_start_now(
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
-    ) -> Result<ResBodyRecStatus, StartErr> {
+    ) -> Result<ResBody, StartErr> {
         self.try_queue_current_frame(ctx_guard)
             .map_err(|e| match e {
-                DecodeErr::Timedout => StartErr::Timeout,
+                DecodeErr::Timeout => StartErr::Timeout,
                 _ => StartErr::Anyhow(anyhow!("Error decoding frame: {e}")),
             })?;
-        Ok(ResBodyRecStatus::new(
+        Ok(ResBody::new(
             ctx_guard.set_rec_state(EdlRecordingState::Started),
             None,
         ))
     }
 
     fn try_log_final_edit(
+        &mut self,
+        ctx_guard: &mut MutexGuard<ContextInner>,
+    ) -> Result<Vec<Edit>, Error> {
+        self.source_tape = None;
+        self.av_channels = None;
+        self.write_edit_to_edl(ctx_guard).and_then(|e| {
+            let mut res = vec![e];
+            match EditType::try_from(self.edit_type.as_str()).unwrap() {
+                EditType::Cut => (),
+                _ => res.push(EditRequestData::blank_frame().write_edit_to_edl(ctx_guard)?),
+            };
+            Ok(res)
+        })
+    }
+
+    fn write_edit_to_edl(
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
     ) -> Result<Edit, Error> {
@@ -446,6 +474,22 @@ impl EditRequestData {
             })
     }
 
+    fn build_edit_from_current_and_prev(
+        &mut self,
+        ctx_guard: &mut MutexGuard<ContextInner>,
+    ) -> Result<Edit, DecodeErr> {
+        self.try_queue_current_frame(ctx_guard)?;
+        let prev_record = ctx_guard
+            .frame_queue
+            .pop()
+            .context("No previous value in frame_queue")?;
+        let curr_record = ctx_guard
+            .frame_queue
+            .front()
+            .context("No current value in frame_queue")?;
+        Ok(FrameDataPair::new(&prev_record, curr_record).try_into()?)
+    }
+
     fn try_queue_current_frame(
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
@@ -458,28 +502,6 @@ impl EditRequestData {
         Ok(())
     }
 
-    fn build_edit_from_current_and_prev(
-        &mut self,
-        ctx_guard: &mut MutexGuard<ContextInner>,
-    ) -> Result<Edit, DecodeErr> {
-        self.try_queue_current_frame(ctx_guard)?;
-        // println!(
-        //     "-------------------------------------- {:#?}",
-        //     ctx_guard.frame_queue
-        // );
-        let prev_record = ctx_guard
-            .frame_queue
-            .pop()
-            .context("No previous value in frame_queue")?;
-        let curr_record = ctx_guard
-            .frame_queue
-            .front()
-            .context("No current value in frame_queue")?;
-        // println!("prev: {:#?}", prev_record);
-        // println!("curr: {:#?}", curr_record);
-        Ok(FrameDataPair::new(&prev_record, curr_record).try_into()?)
-    }
-
     pub fn map_selected_source(&mut self, ctx_guard: &MutexGuard<ContextInner>) -> &Self {
         if self.source_tape.is_none() {
             self.source_tape = ctx_guard.selected_src_data.source_tape.clone();
@@ -490,15 +512,14 @@ impl EditRequestData {
         self
     }
 
-    fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<ResBodyRecStatus, Error> {
-        // log::info!("\nWaiting for timecode signal to start...");
+    fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<ResBody, Error> {
         let decode_handlers = Arc::clone(&ctx.lock().decode_handlers);
         let tc = decode_handlers.recv_frame()?;
         let edit_data = self.map_selected_source(&ctx.lock());
 
         let mut ctx_guard = ctx.lock();
         ctx_guard.frame_queue.push(tc, edit_data)?;
-        Ok(ResBodyRecStatus::new(
+        Ok(ResBody::new(
             ctx_guard.set_rec_state(EdlRecordingState::Started),
             None,
         ))
@@ -524,25 +545,13 @@ impl SourceTapeRequestData {
     }
 }
 
-impl From<SourceTapeRequestData> for EditRequestData {
-    fn from(value: SourceTapeRequestData) -> Self {
-        EditRequestData {
-            edit_type: "cut".into(),
-            edit_duration_frames: None,
-            wipe_num: None,
-            source_tape: value.source_tape,
-            av_channels: value.av_channels,
-        }
-    }
-}
-
 trait IntoResponse {
     type Error;
     fn try_into_200(&self) -> Result<Response, Self::Error>;
     fn try_into_202(&self) -> Result<Response, Self::Error>;
 }
 
-impl IntoResponse for ResBodyRecStatus {
+impl IntoResponse for ResBody {
     type Error = Error;
 
     fn try_into_200(&self) -> Result<Response, Self::Error> {
@@ -568,8 +577,7 @@ impl From<Response> for SerializedResponse {
     fn from(res: Response) -> Self {
         let content = res.content.to_string();
         let length = content.len();
-        let status_line = String::from(res.status);
-
+        let status_line: &str = res.status.into();
         SerializedResponse {
             value: format!(
                 "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{content}"
@@ -578,7 +586,7 @@ impl From<Response> for SerializedResponse {
     }
 }
 
-impl From<StatusCode> for String {
+impl From<StatusCode> for &str {
     fn from(value: StatusCode) -> Self {
         match value {
             StatusCode::S200 => "200 OK",
@@ -587,7 +595,6 @@ impl From<StatusCode> for String {
             StatusCode::S418 => "418 I'M A TEAPOT",
             StatusCode::S500 => "500 INTERNAL SERVER ERROR",
         }
-        .to_string()
     }
 }
 

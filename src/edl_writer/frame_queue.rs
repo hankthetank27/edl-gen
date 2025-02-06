@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Error};
+use anyhow::{anyhow, Error};
 use std::collections::VecDeque;
 use vtc::Timecode;
 
@@ -10,25 +10,24 @@ use crate::{edl_writer::AVChannels, server::EditRequestData};
 
 pub struct EditData {
     pub(crate) edit_type: EditType,
+    pub(crate) source_tape: Option<String>,
     pub(crate) edit_duration_frames: Option<u32>,
     pub(crate) wipe_num: Option<u32>,
-    pub(crate) source_tape: String,
     pub(crate) av_channels: AVChannels,
 }
 
 impl TryFrom<&EditRequestData> for EditData {
     type Error = Error;
     fn try_from(edit_req: &EditRequestData) -> Result<Self, Self::Error> {
-        let edit_type = edit_req.edit_type.as_str().try_into()?;
         Ok(EditData {
-            source_tape: edit_req
-                .source_tape
-                .clone()
-                .context("Source tape required")?,
+            edit_type: edit_req.edit_type.as_str().try_into()?,
+            source_tape: edit_req.source_tape.clone(),
             edit_duration_frames: edit_req.edit_duration_frames,
             wipe_num: edit_req.wipe_num.or(Some(1)),
-            av_channels: edit_req.av_channels.context("AV channels required")?,
-            edit_type,
+            av_channels: edit_req.av_channels.unwrap_or(AVChannels {
+                video: true,
+                audio: 0,
+            }),
         })
     }
 }
@@ -54,11 +53,21 @@ impl FrameQueue {
 
     pub fn push(&mut self, timecode: Timecode, edit_req: &EditRequestData) -> Result<(), Error> {
         let edit_data: EditData = edit_req.try_into()?;
-        let prev_tape = match self.front() {
-            Some(front) => front.source_tape.to_owned(),
-            None => edit_data.source_tape.to_owned(),
-        };
-        let record = FrameData::try_from_edit(edit_data, prev_tape, timecode, self.count)?;
+        let prev_tape = self.front().and_then(|front| front.source_tape.clone());
+        let prev_av_channels = self
+            .front()
+            .map(|front| front.av_channels)
+            .unwrap_or_else(|| AVChannels {
+                video: true,
+                audio: 0,
+            });
+        let record = FrameData::try_from_edit(
+            edit_data,
+            prev_tape,
+            prev_av_channels,
+            timecode,
+            self.count + 1,
+        )?;
         self.count += 1;
         self.log.push_back(record);
         Ok(())
@@ -90,9 +99,10 @@ pub enum EditType {
 pub struct FrameData {
     pub(crate) edit_number: usize,
     pub(crate) edit_type: EditType,
-    pub(crate) source_tape: String,
-    pub(crate) prev_tape: String,
+    pub(crate) source_tape: Option<String>,
+    pub(crate) prev_tape: Option<String>,
     pub(crate) av_channels: AVChannels,
+    pub(crate) prev_av_channels: AVChannels,
     pub(crate) timecode: Timecode,
     pub(crate) edit_duration_frames: Option<u32>,
     pub(crate) wipe_num: Option<u32>,
@@ -101,18 +111,19 @@ pub struct FrameData {
 impl FrameData {
     pub fn try_from_edit(
         edit: EditData,
-        prev_tape: String,
+        prev_tape: Option<String>,
+        prev_av_channels: AVChannels,
         timecode: Timecode,
         edit_number: usize,
     ) -> Result<Self, Error> {
         let edit_duration_frames =
             FrameData::validate_edit_type_duration(&edit.edit_type, &edit.edit_duration_frames)?;
         let wipe_num = FrameData::validate_wipe_num(&edit.edit_type, &edit.wipe_num)?;
-
         Ok(FrameData {
             source_tape: edit.source_tape,
             av_channels: edit.av_channels,
             edit_type: edit.edit_type,
+            prev_av_channels,
             prev_tape,
             timecode,
             edit_number,
@@ -235,7 +246,7 @@ mod test {
             av_channels: Some(AVChannels::default()),
         };
         assert!(queue.push(tc_3, &req_3).is_ok());
-        assert_eq!(queue.log.back().unwrap().wipe_num, Some(1)); // We got to default value
+        assert_eq!(queue.log.back().unwrap().wipe_num, Some(1)); // We go to default value
 
         let tc_4 = Timecode::with_frames("01:00:11:01", vtc::rates::F24).unwrap();
         let req_4 = EditRequestData {
@@ -259,24 +270,34 @@ mod test {
 
         let tc_6 = Timecode::with_frames("01:00:11:01", vtc::rates::F24).unwrap();
         let req_6 = EditRequestData {
-            edit_type: "Cut".into(), //invalid
+            edit_type: "Cut".into(),
             edit_duration_frames: None,
-            wipe_num: None, //invalid
-            source_tape: None,
+            wipe_num: None,
+            source_tape: None, // valid
             av_channels: Some(AVChannels::default()),
         };
-        assert!(!queue.push(tc_6, &req_6).is_ok());
+        assert!(queue.push(tc_6, &req_6).is_ok());
 
-        let tc_7 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
+        let tc_7 = Timecode::with_frames("01:00:11:01", vtc::rates::F24).unwrap();
         let req_7 = EditRequestData {
+            edit_type: "dissolve".into(),
+            edit_duration_frames: Some(9),
+            wipe_num: None,
+            source_tape: None, // valid
+            av_channels: Some(AVChannels::default()),
+        };
+        assert!(queue.push(tc_7, &req_7).is_ok());
+
+        let tc_8 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
+        let req_8 = EditRequestData {
             edit_type: "Cut".into(),
             edit_duration_frames: Some(1), //ignored
             wipe_num: Some(1),             //ignored
             source_tape: Some("test_1".into()),
             av_channels: Some(AVChannels::default()),
         };
-        assert!(queue.push(tc_7, &req_7).is_ok());
+        assert!(queue.push(tc_8, &req_8).is_ok());
 
-        assert_eq!(queue.count, 4);
+        assert_eq!(queue.count, 6);
     }
 }

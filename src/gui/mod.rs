@@ -86,7 +86,7 @@ impl App {
             thread::Builder::new()
                 .name("edlgen-server".into())
                 .spawn(move || {
-                    Server::new(&opt.port).listen(
+                    Server::new(opt.port).listen(
                         rx_stop_serv,
                         tx_serv_stopped,
                         decode_handlers,

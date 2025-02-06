@@ -34,9 +34,7 @@ vtc = "0.1.13"
 cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde", features = ["asio"] }
 
 [dev-dependencies]
-# egui_kittest = "0.30.0"
-hound = "3.4"
-itertools = "0.14.0"
+cpal-mock = { version = "0.0.1", path = "crates/cpal-mock"}
 
 # https://github.com/bitshifter/mathbench-rs/issues/35
 # fixes nightly build

@@ -11,9 +11,9 @@ use std::{
 
 #[derive(Debug)]
 pub enum ChannelErr {
-    Lock,
+    LockPoisoned,
     NoVal,
-    Timedout,
+    Timeout,
 }
 
 impl Error for ChannelErr {}
@@ -21,9 +21,9 @@ impl Error for ChannelErr {}
 impl fmt::Display for ChannelErr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            ChannelErr::Lock => write!(f, "Lock poisoned"),
+            ChannelErr::LockPoisoned => write!(f, "Lock poisoned"),
             ChannelErr::NoVal => write!(f, "No value found"),
-            ChannelErr::Timedout => write!(f, "Timedout"),
+            ChannelErr::Timeout => write!(f, "Timeout"),
         }
     }
 }
@@ -33,7 +33,7 @@ type PErr<'a, T> = PoisonError<MutexGuard<'a, Option<T>>>;
 
 impl<'a, T> From<PErr<'a, T>> for ChannelErr {
     fn from(_: PErr<'a, T>) -> ChannelErr {
-        ChannelErr::Lock
+        ChannelErr::LockPoisoned
     }
 }
 
@@ -43,9 +43,9 @@ type TOErr<'a, T> = PoisonError<(MutexGuard<'a, Option<T>>, WaitTimeoutResult)>;
 impl<'a, T> From<TOErr<'a, T>> for ChannelErr {
     fn from(err: TOErr<'a, T>) -> ChannelErr {
         if err.get_ref().1.timed_out() {
-            ChannelErr::Timedout
+            ChannelErr::Timeout
         } else {
-            ChannelErr::Lock
+            ChannelErr::LockPoisoned
         }
     }
 }
@@ -128,7 +128,7 @@ impl<T> Receiver<T> {
         while guard.is_none() {
             let (wait_gaurd, timeout_res) = self.0.cvar.wait_timeout(guard, timeout)?;
             if timeout_res.timed_out() {
-                return Err(ChannelErr::Timedout);
+                return Err(ChannelErr::Timeout);
             }
             guard = wait_gaurd;
             if self.0.closed.load(Ordering::Acquire) {

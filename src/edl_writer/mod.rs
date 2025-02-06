@@ -54,7 +54,7 @@ impl Edl {
 
         let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
         file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        file.write_all(format!("FCM: {}\n", String::from(opt.ntsc)).as_bytes())?;
+        file.write_all(format!("FCM: {}", String::from(opt.ntsc)).as_bytes())?;
         file.flush()?;
         Ok(Edl { file })
     }
@@ -77,8 +77,8 @@ pub enum Ntsc {
 impl From<Ntsc> for &str {
     fn from(value: Ntsc) -> Self {
         match value {
-            Ntsc::DropFrame => "Drop Frame",
-            Ntsc::NonDropFrame => "Non-Drop Frame",
+            Ntsc::DropFrame => "DROP FRAME",
+            Ntsc::NonDropFrame => "NON-DROP FRAME",
         }
     }
 }
@@ -144,19 +144,19 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
             )
         };
 
-        match &value.out_.edit_type {
+        match &value.in_.edit_type {
             EditType::Cut => {
-                let to = value.as_edit_dest_clip();
-                Ok(Edit::Cut(to))
+                let from = value.as_dest_clip();
+                Ok(Edit::Cut(from))
             }
 
             e @ EditType::Dissolve => {
-                let from = value.as_edit_prev_clip();
-                let to = value.as_edit_dest_clip();
+                let from = value.as_prev_clip_flat();
+                let to = value.as_dest_clip();
 
                 Ok(Edit::Dissolve(Dissolve {
                     edit_duration_frames: value
-                        .out_
+                        .in_
                         .edit_duration_frames
                         .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
                     from,
@@ -165,12 +165,12 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
             }
 
             e @ EditType::Wipe => {
-                let from = value.as_edit_prev_clip();
-                let to = value.as_edit_dest_clip();
+                let from = value.as_prev_clip_flat();
+                let to = value.as_dest_clip();
 
                 Ok(Edit::Wipe(Wipe {
                     edit_duration_frames: value
-                        .out_
+                        .in_
                         .edit_duration_frames
                         .map_or_else(|| Err(edit_duration_err(e)), Ok)?,
                     from,
@@ -192,11 +192,13 @@ impl<'a> FrameDataPair<'a> {
         FrameDataPair { in_, out_ }
     }
 
-    pub fn as_edit_dest_clip(&self) -> Clip {
+    pub fn as_dest_clip(&self) -> Clip {
+        let (source_tape, source_tape_cmt) = self.get_source_names(&self.in_.source_tape);
         Clip {
-            edit_number: self.out_.edit_number,
-            source_tape: self.in_.source_tape.clone(),
-            av_channels: self.out_.av_channels,
+            source_tape,
+            source_tape_cmt,
+            edit_number: self.in_.edit_number,
+            av_channels: self.in_.av_channels,
             source_in: self.in_.timecode,
             source_out: self.out_.timecode,
             record_in: self.in_.timecode,
@@ -204,16 +206,31 @@ impl<'a> FrameDataPair<'a> {
         }
     }
 
-    pub fn as_edit_prev_clip(&self) -> Clip {
+    pub fn as_prev_clip_flat(&self) -> Clip {
+        let (source_tape, source_tape_cmt) = self.get_source_names(&self.in_.prev_tape);
         Clip {
+            source_tape,
+            source_tape_cmt,
             edit_number: self.in_.edit_number,
-            source_tape: self.in_.prev_tape.clone(),
-            av_channels: self.in_.av_channels,
+            av_channels: self.in_.prev_av_channels,
             source_in: self.in_.timecode,
             source_out: self.in_.timecode,
             record_in: self.in_.timecode,
             record_out: self.in_.timecode,
         }
+    }
+
+    fn get_source_names(&self, source_tape: &Option<String>) -> (String, String) {
+        source_tape
+            .as_ref()
+            .map(|st| (trim_tape_name(st), st.clone()))
+            .unwrap_or_else(|| {
+                let source_tape_cmt = match self.in_.edit_type {
+                    EditType::Cut => "Cut",
+                    _ => "Cross Dissolve",
+                };
+                ("BL".to_string(), source_tape_cmt.into())
+            })
     }
 }
 
@@ -224,14 +241,14 @@ impl TryFrom<&Edit> for String {
         let (cut_one_str, cut_two_str) = edit.get_strs()?;
         match edit {
             Edit::Cut(clip) => {
-                let from_cmt = format!("* FROM CLIP NAME: {}", clip.source_tape);
+                let from_cmt = format!("* FROM CLIP NAME: {}", clip.source_tape_cmt);
                 let from: String = EdlEditLine::from_clip(clip, cut_one_str, None)?.into();
                 Ok(format!("\n{from}\n{from_cmt}"))
             }
 
             Edit::Dissolve(dissolve) => {
-                let from_cmt = format!("* FROM CLIP NAME: {}", dissolve.from.source_tape);
-                let to_cmt = format!("* TO CLIP NAME: {}", dissolve.to.source_tape);
+                let from_cmt = format!("* FROM CLIP NAME: {}", dissolve.from.source_tape_cmt);
+                let to_cmt = format!("* TO CLIP NAME: {}", dissolve.to.source_tape_cmt);
                 let from: String =
                     EdlEditLine::from_clip(&dissolve.from, cut_one_str, None)?.into();
                 let to: String = EdlEditLine::from_clip(
@@ -244,8 +261,8 @@ impl TryFrom<&Edit> for String {
             }
 
             Edit::Wipe(wipe) => {
-                let from_cmt = format!("* FROM CLIP NAME: {}", wipe.from.source_tape);
-                let to_cmt = format!("* TO CLIP NAME: {}", wipe.to.source_tape);
+                let from_cmt = format!("* FROM CLIP NAME: {}", wipe.from.source_tape_cmt);
+                let to_cmt = format!("* TO CLIP NAME: {}", wipe.to.source_tape_cmt);
                 let from: String = EdlEditLine::from_clip(&wipe.from, cut_one_str, None)?.into();
                 let to: String =
                     EdlEditLine::from_clip(&wipe.to, cut_two_str, Some(wipe.edit_duration_frames))?
@@ -285,7 +302,7 @@ impl From<AVChannels> for String {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(test, derive(Deserialize))]
+#[cfg_attr(test, derive(Deserialize, Clone))]
 pub struct Dissolve {
     pub from: Clip,
     pub to: Clip,
@@ -293,7 +310,7 @@ pub struct Dissolve {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(test, derive(Deserialize))]
+#[cfg_attr(test, derive(Deserialize, Clone))]
 pub struct Wipe {
     pub from: Clip,
     pub to: Clip,
@@ -305,12 +322,12 @@ pub struct Wipe {
 pub struct Clip {
     pub edit_number: usize,
     pub source_tape: String,
+    pub source_tape_cmt: String,
     pub av_channels: AVChannels,
     pub source_in: Timecode,
     pub source_out: Timecode,
     pub record_in: Timecode,
     pub record_out: Timecode,
-    //TODO: speed_change
 }
 
 impl Serialize for Clip {
@@ -318,9 +335,10 @@ impl Serialize for Clip {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("Clip", 7)?;
+        let mut state = serializer.serialize_struct("Clip", 8)?;
         state.serialize_field("edit_number", &self.edit_number)?;
         state.serialize_field("source_tape", &self.source_tape)?;
+        state.serialize_field("source_tape_cmt", &self.source_tape_cmt)?;
         state.serialize_field("av_channels", &self.av_channels)?;
         state.serialize_field("source_in", &self.source_in.timecode())?;
         state.serialize_field("source_out", &self.source_out.timecode())?;
@@ -341,7 +359,6 @@ pub struct EdlEditLine {
     source_out: String,
     record_in: String,
     record_out: String,
-    //TODO: speed_change
 }
 
 impl EdlEditLine {
@@ -357,8 +374,7 @@ impl EdlEditLine {
 
         Ok(EdlEditLine {
             edit_number: validate_num_size(clip.edit_number as u32)?,
-            //TODO: need name validation
-            source_tape: postfix_spaces(&trim_tape_name(&clip.source_tape), 8),
+            source_tape: postfix_spaces(&clip.source_tape, 8),
             av_channels: postfix_spaces(&String::from(clip.av_channels), 9),
             source_in: clip.source_in.timecode(),
             source_out: clip.source_out.timecode(),
@@ -388,10 +404,11 @@ impl From<EdlEditLine> for String {
 }
 
 fn trim_tape_name(tape: &str) -> String {
-    tape.chars().take(8).collect()
+    tape.replace(" ", "_").chars().take(8).collect()
 }
 
 fn postfix_spaces(string: &str, len: usize) -> String {
+    assert!(string.len() <= len);
     let spaces = String::from_utf8(vec![b' '; std::cmp::max(len - string.len(), 0)])
         .unwrap_or_else(|_| "".to_string());
     format!("{string}{spaces}")
@@ -413,6 +430,35 @@ fn validate_num_size(num: u32) -> Result<String, Error> {
 mod test {
     use super::*;
     use vtc::rates;
+
+    trait AssessEditType {
+        fn cut(&self) -> &Clip;
+        fn dissolve(&self) -> &Dissolve;
+        fn wipe(&self) -> &Wipe;
+    }
+
+    impl AssessEditType for Edit {
+        fn cut(&self) -> &Clip {
+            match self {
+                Edit::Cut(clip) => clip,
+                t @ _ => panic!("Expected Clip, got {:?}", t),
+            }
+        }
+
+        fn dissolve(&self) -> &Dissolve {
+            match self {
+                Edit::Dissolve(dis) => dis,
+                t @ _ => panic!("Expected Dissolve, got {:?}", t),
+            }
+        }
+
+        fn wipe(&self) -> &Wipe {
+            match self {
+                Edit::Wipe(wipe) => wipe,
+                t @ _ => panic!("Expected Wipe, got {:?}", t),
+            }
+        }
+    }
 
     #[test]
     fn av_channels_from_str() {
@@ -460,6 +506,113 @@ mod test {
         assert_eq!(trim_tape_name("test").len(), 4);
         assert_eq!(trim_tape_name("testtest").len(), 8);
         assert_eq!(trim_tape_name("testtest.test").len(), 8);
+        assert_eq!(trim_tape_name(" "), "_".to_string());
+        assert_eq!(trim_tape_name("a tape "), "a_tape_".to_string());
+        assert_eq!(trim_tape_name("a tape and long"), "a_tape_a".to_string());
+    }
+
+    #[test]
+    fn edit_req_into() {
+        let tc_1 = Timecode::with_frames("01:00:00:00", rates::F24).unwrap();
+        let tc_2 = Timecode::with_frames("01:05:10:00", rates::F24).unwrap();
+        let frame_in = FrameData {
+            edit_number: 1,
+            edit_type: EditType::Dissolve,
+            source_tape: Some("tape_1 with long name".into()),
+            prev_tape: None,
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_1,
+            edit_duration_frames: Some(10),
+            wipe_num: Some(1),
+        };
+        let frame_out = FrameData {
+            edit_number: 2,
+            edit_type: EditType::Cut,
+            source_tape: Some("tape_2".into()),
+            prev_tape: Some("tape_1 with long name".into()),
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_2,
+            edit_duration_frames: None,
+            wipe_num: None,
+        };
+        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+            .try_into()
+            .unwrap();
+        assert_eq!(edit.dissolve().from.source_tape, "BL".to_string());
+        assert_eq!(
+            edit.dissolve().from.source_tape_cmt,
+            "Cross Dissolve".to_string()
+        );
+        assert_eq!(edit.dissolve().to.source_tape, "tape_1_w".to_string());
+        assert_eq!(
+            edit.dissolve().to.source_tape_cmt,
+            "tape_1 with long name".to_string()
+        );
+        assert!(edit.dissolve().from.source_in == edit.dissolve().from.source_out);
+        assert!(edit.dissolve().to.source_in < edit.dissolve().to.source_out);
+
+        let frame_in = FrameData {
+            edit_number: 1,
+            edit_type: EditType::Wipe,
+            source_tape: Some("tape1".into()),
+            prev_tape: Some("tape0".into()),
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_1,
+            edit_duration_frames: Some(10),
+            wipe_num: Some(1),
+        };
+        let frame_out = FrameData {
+            edit_number: 2,
+            edit_type: EditType::Dissolve,
+            source_tape: Some("tape_2".into()),
+            prev_tape: Some("tape_1 with long name".into()),
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_2,
+            edit_duration_frames: None,
+            wipe_num: None,
+        };
+        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+            .try_into()
+            .unwrap();
+        assert_eq!(edit.wipe().from.source_tape, "tape0".to_string());
+        assert_eq!(edit.wipe().from.source_tape_cmt, "tape0".to_string());
+        assert_eq!(edit.wipe().to.source_tape, "tape1".to_string());
+        assert_eq!(edit.wipe().to.source_tape_cmt, "tape1".to_string());
+        assert!(edit.wipe().from.source_in == edit.wipe().from.source_out);
+        assert!(edit.wipe().to.source_in < edit.wipe().to.source_out);
+
+        let frame_in = FrameData {
+            edit_number: 1,
+            edit_type: EditType::Cut,
+            source_tape: Some("tape_1".into()),
+            prev_tape: None,
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_1,
+            edit_duration_frames: Some(10),
+            wipe_num: Some(1),
+        };
+        let frame_out = FrameData {
+            edit_number: 2,
+            edit_type: EditType::Cut,
+            source_tape: Some("tape_2".into()),
+            prev_tape: Some("tape_1".into()),
+            av_channels: AVChannels::default(),
+            prev_av_channels: AVChannels::default(),
+            timecode: tc_2,
+            edit_duration_frames: None,
+            wipe_num: None,
+        };
+        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+            .try_into()
+            .unwrap();
+        assert_eq!(edit.cut().source_tape, "tape_1".to_string());
+        assert_eq!(edit.cut().source_tape_cmt, "tape_1".to_string());
+        assert!(edit.cut().source_in < edit.cut().source_out);
     }
 
     #[test]
@@ -468,7 +621,8 @@ mod test {
         let tc_2 = Timecode::with_frames("01:05:10:00", rates::F24).unwrap();
         let clip_1 = Clip {
             edit_number: 1,
-            source_tape: "test_clip.mov".into(),
+            source_tape: trim_tape_name("test_clip.mov".into()),
+            source_tape_cmt: "test_clip.mov".into(),
             av_channels: AVChannels::default(),
             source_in: tc_1,
             source_out: tc_2,
@@ -480,7 +634,8 @@ mod test {
         let tc_2 = Timecode::with_frames("01:15:00:00", rates::F24).unwrap();
         let clip_2 = Clip {
             edit_number: 2,
-            source_tape: "test_clip_2.mov".into(),
+            source_tape: trim_tape_name("test_clip_2.mov".into()),
+            source_tape_cmt: "test_clip_2.mov".into(),
             av_channels: AVChannels::default(),
             source_in: tc_1,
             source_out: tc_2,

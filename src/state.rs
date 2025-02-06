@@ -74,7 +74,7 @@ impl Default for Db {
 pub struct Opt {
     pub title: String,
     pub dir: PathBuf,
-    pub port: usize,
+    pub port: u16,
     pub sample_rate: usize,
     pub fps: f32,
     pub ntsc: Ntsc,
@@ -101,7 +101,7 @@ impl Opt {
             })
     }
 
-    fn default_port() -> usize {
+    fn default_port() -> u16 {
         StoredOpts::Port.try_into().unwrap_or(7890)
     }
 
@@ -191,6 +191,12 @@ pub trait Writer {
 }
 
 impl Writer for usize {
+    fn write(&self, key: &StoredOpts) -> Option<IVec> {
+        DB.insert_from_opts(key, self.to_string().as_bytes())
+    }
+}
+
+impl Writer for u16 {
     fn write(&self, key: &StoredOpts) -> Option<IVec> {
         DB.insert_from_opts(key, self.to_string().as_bytes())
     }
@@ -297,6 +303,17 @@ impl TryFrom<StoredOpts> for usize {
             str::from_utf8(&val)?
                 .parse::<usize>()
                 .context("Could not parse to usize")
+        })
+    }
+}
+
+impl TryFrom<StoredOpts> for u16 {
+    type Error = Error;
+    fn try_from(stored_opts: StoredOpts) -> Result<Self, Self::Error> {
+        DB.get_from_stored_opts(stored_opts).and_then(|val| {
+            str::from_utf8(&val)?
+                .parse::<u16>()
+                .context("Could not parse to u16")
         })
     }
 }

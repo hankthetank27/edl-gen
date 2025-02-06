@@ -298,7 +298,7 @@ impl DecodeHandlers {
 
 #[derive(Debug)]
 pub enum DecodeErr {
-    Timedout,
+    Timeout,
     NoVal,
     Anyhow(String),
 }
@@ -312,7 +312,7 @@ impl std::fmt::Display for DecodeErr {
                 write!(f, "{}", m)
             }
             DecodeErr::NoVal => write!(f, "No LTC value available"),
-            DecodeErr::Timedout => write!(f, "Decode timed out "),
+            DecodeErr::Timeout => write!(f, "Decode timed out "),
         }
     }
 }
@@ -326,9 +326,9 @@ impl From<Error> for DecodeErr {
 impl From<ChannelErr> for DecodeErr {
     fn from(value: ChannelErr) -> Self {
         match value {
-            ChannelErr::Lock => DecodeErr::Anyhow(value.to_string()),
+            ChannelErr::LockPoisoned => DecodeErr::Anyhow(value.to_string()),
             ChannelErr::NoVal => DecodeErr::NoVal,
-            ChannelErr::Timedout => DecodeErr::Timedout,
+            ChannelErr::Timeout => DecodeErr::Timeout,
         }
     }
 }

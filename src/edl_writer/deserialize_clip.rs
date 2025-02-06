@@ -16,6 +16,7 @@ impl<'de> Deserialize<'de> for Clip {
         enum Field {
             EditNumber,
             SourceTape,
+            SourceTapeCmt,
             #[serde(alias = "av_channels")]
             AVChannels,
             SourceIn,
@@ -38,6 +39,7 @@ impl<'de> Deserialize<'de> for Clip {
             {
                 let mut edit_number = None;
                 let mut source_tape = None;
+                let mut source_tape_cmt = None;
                 let mut av_channels = None;
                 let mut source_in = None;
                 let mut source_out = None;
@@ -57,6 +59,12 @@ impl<'de> Deserialize<'de> for Clip {
                                 return Err(de::Error::duplicate_field("source_tape"));
                             }
                             source_tape = Some(map.next_value()?);
+                        }
+                        Field::SourceTapeCmt => {
+                            if source_tape_cmt.is_some() {
+                                return Err(de::Error::duplicate_field("source_tape_cmt"));
+                            }
+                            source_tape_cmt = Some(map.next_value()?);
                         }
                         Field::AVChannels => {
                             if av_channels.is_some() {
@@ -100,6 +108,8 @@ impl<'de> Deserialize<'de> for Clip {
                         .ok_or_else(|| de::Error::missing_field("edit_number"))?,
                     source_tape: source_tape
                         .ok_or_else(|| de::Error::missing_field("source_tape"))?,
+                    source_tape_cmt: source_tape_cmt
+                        .ok_or_else(|| de::Error::missing_field("source_tape_cmt"))?,
                     av_channels: av_channels
                         .ok_or_else(|| de::Error::missing_field("av_channels"))?,
                     source_in: source_in.ok_or_else(|| de::Error::missing_field("source_in"))?,
