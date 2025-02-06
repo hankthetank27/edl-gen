@@ -1,8 +1,8 @@
 [package]
-authors = ["Hank Jackson <hjackson277@gmail.com>"]
-name = "cpal-mock"
-version = "0.0.1"
-edition = "2021"
+name = "test_support"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.86"

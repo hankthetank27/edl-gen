@@ -1,7 +1,7 @@
 use cpal::traits::DeviceTrait;
-use cpal_mock::MockDevice;
 use eframe::egui::Context;
 use parking_lot::Mutex;
+use test_support::MockDevice;
 
 use crate::{
     edl_writer::{AVChannels, Clip, Dissolve, Edit, Ntsc, Wipe},
