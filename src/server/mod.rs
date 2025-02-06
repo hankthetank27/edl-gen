@@ -497,7 +497,7 @@ impl EditRequestData {
     ) -> Result<(), DecodeErr> {
         let tc = ctx_guard
             .decode_handlers
-            .recv_frame_timeout(Duration::from_millis(1000))?;
+            .recv_frame_timeout(Duration::from_millis(500))?;
         let edit_data = self.map_selected_source(ctx_guard);
         ctx_guard.frame_queue.push(tc, edit_data)?;
         Ok(())
