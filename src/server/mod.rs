@@ -59,7 +59,7 @@ impl Server {
         thread::spawn(move || {
             while let Ok((mut req_data, mut ctx)) = rx_ltc_wait_worker.recv() {
                 match req_data.wait_for_first_frame(&mut ctx) {
-                    Ok(body) => body.recording_status,
+                    Ok(body) => body.recording_state,
                     Err(e) => {
                         log::error!("Unable to log start: {e}");
                         ctx.lock().set_rec_state(EdlRecordingState::Stopped)
@@ -154,13 +154,13 @@ enum EditBody {
 #[derive(Serialize, Debug)]
 #[cfg_attr(test, derive(Deserialize))]
 struct ResBody {
-    recording_status: EdlRecordingState,
+    recording_state: EdlRecordingState,
     edit: Option<Edit>,
     final_edits: Option<Vec<Edit>>,
 }
 
 impl ResBody {
-    fn new(recording_status: EdlRecordingState, edit_or_edits: Option<EditBody>) -> Self {
+    fn new(recording_state: EdlRecordingState, edit_or_edits: Option<EditBody>) -> Self {
         let (edit, final_edits) = edit_or_edits
             .map(|eb| match eb {
                 EditBody::Edit(e) => (Some(e), None),
@@ -168,7 +168,7 @@ impl ResBody {
             })
             .unwrap_or((None, None));
         ResBody {
-            recording_status,
+            recording_state,
             edit,
             final_edits,
         }
@@ -285,7 +285,6 @@ impl<'req> Request<'req> {
         match ctx_guard.rec_state {
             EdlRecordingState::Started => {
                 ctx_guard.set_rec_state(EdlRecordingState::Waiting);
-                log::info!("Ending recording...");
 
                 let edits = self
                     .body()?
@@ -295,12 +294,11 @@ impl<'req> Request<'req> {
 
                 ctx_guard.decode_handlers.decode_off()?;
                 let rec_state = ctx_guard.set_rec_state(EdlRecordingState::Stopped);
-                log::info!("EDL recording ended");
+                log::info!("EDL recording ended.");
 
                 ResBody::new(rec_state, Some(EditBody::Edits(edits))).try_into_200()
             }
             EdlRecordingState::Waiting => {
-                log::info!("Ending recording...");
                 ctx_guard.decode_handlers.decode_off()?;
                 let rec_state = ctx_guard.set_rec_state(EdlRecordingState::Stopped);
                 log::info!("EDL recording ended");
@@ -422,10 +420,14 @@ impl EditRequestData {
         }
     }
 
+    // TODO: warn if source_tape or av_channels is None here
     fn try_log_edit(&mut self, ctx_guard: &mut MutexGuard<ContextInner>) -> Result<ResBody, Error> {
         Ok(ResBody::new(
             EdlRecordingState::Started,
-            Some(EditBody::Edit(self.write_edit_to_edl(ctx_guard)?)),
+            Some(EditBody::Edit(
+                self.map_selected_source(ctx_guard)
+                    .write_edit_to_edl(ctx_guard)?,
+            )),
         ))
     }
 
@@ -433,11 +435,13 @@ impl EditRequestData {
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
     ) -> Result<ResBody, StartErr> {
-        self.try_queue_current_frame(ctx_guard)
+        self.map_selected_source(ctx_guard)
+            .try_queue_current_frame(ctx_guard)
             .map_err(|e| match e {
                 DecodeErr::Timeout => StartErr::Timeout,
                 _ => StartErr::Anyhow(anyhow!("Error decoding frame: {e}")),
             })?;
+        log::info!("LTC signal detected. Recording to EDL");
         Ok(ResBody::new(
             ctx_guard.set_rec_state(EdlRecordingState::Started),
             None,
@@ -497,13 +501,12 @@ impl EditRequestData {
     ) -> Result<(), DecodeErr> {
         let tc = ctx_guard
             .decode_handlers
-            .recv_frame_timeout(Duration::from_millis(500))?;
-        let edit_data = self.map_selected_source(ctx_guard);
-        ctx_guard.frame_queue.push(tc, edit_data)?;
+            .recv_frame_timeout(Duration::from_millis(1000))?;
+        ctx_guard.frame_queue.push(tc, self)?;
         Ok(())
     }
 
-    pub fn map_selected_source(&mut self, ctx_guard: &MutexGuard<ContextInner>) -> &Self {
+    pub fn map_selected_source(&mut self, ctx_guard: &MutexGuard<ContextInner>) -> &mut Self {
         if self.source_tape.is_none() {
             self.source_tape = ctx_guard.selected_src_data.source_tape.clone();
         }
@@ -516,10 +519,11 @@ impl EditRequestData {
     fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<ResBody, Error> {
         let decode_handlers = Arc::clone(&ctx.lock().decode_handlers);
         let tc = decode_handlers.recv_frame()?;
-        let edit_data = self.map_selected_source(&ctx.lock());
+        self.map_selected_source(&ctx.lock());
 
         let mut ctx_guard = ctx.lock();
-        ctx_guard.frame_queue.push(tc, edit_data)?;
+        ctx_guard.frame_queue.push(tc, self)?;
+        log::info!("LTC signal detected. Recording to EDL");
         Ok(ResBody::new(
             ctx_guard.set_rec_state(EdlRecordingState::Started),
             None,
