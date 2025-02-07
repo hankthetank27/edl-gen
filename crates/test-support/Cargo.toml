@@ -1,0 +1,12 @@
+[package]
+name = "test_support"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = "1.0.86"
+cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde" }
+hound = "3.4"
+itertools = "0.14.0"
+parking_lot = "0.12.3"

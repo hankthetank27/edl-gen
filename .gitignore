@@ -7,3 +7,4 @@ flamegraph*
 /result
 /test-output
 *.edl
+/cmp-files

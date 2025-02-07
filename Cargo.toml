@@ -1,14 +1,20 @@
-[package]
+[workspace]
+members = ["crates/test-support"]
+
+[workspace.package]
 authors = ["Hank Jackson <hjackson277@gmail.com>"]
-name = "edl-gen"
-version = "0.1.5"
 edition = "2021"
+version = "0.1.5"
+
+[package]
+name = "edl-gen"
 build = "build.rs"
 readme = "README.md"
 repository = "https://github.com/hankthetank27/edl-gen/"
 license = "MIT"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.86"
@@ -28,15 +34,13 @@ semver = "1.0.24"
 serde = {version = "1.0.203", features = ["derive"]}
 serde_json = "1.0.117"
 sled = "0.34.7"
-tokio = {version = "1.43.0", features = ["net", "rt", "io-util", "macros", "rt-multi-thread", "sync"]}
 vtc = "0.1.13"
 
 [target.'cfg(windows)'.dependencies]
 cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde", features = ["asio"] }
 
 [dev-dependencies]
-hound = "3.4"
-itertools = "0.14.0"
+test_support = { path = "crates/test-support"}
 
 # https://github.com/bitshifter/mathbench-rs/issues/35
 # fixes nightly build

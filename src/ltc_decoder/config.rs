@@ -7,7 +7,7 @@ use crate::state::{FindWithFallback, LTCSerializedConfg, StoredOpts, Writer};
 #[cfg(not(test))]
 pub type Device = cpal::Device;
 #[cfg(test)]
-pub type Device = crate::test::cpal_device::MockDevice;
+pub type Device = test_support::MockDevice;
 
 // const BUFFER_SIZES: [u32; 11] = [16, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
 #[derive(Clone, Copy)]

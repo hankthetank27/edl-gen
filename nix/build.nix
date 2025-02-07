@@ -19,12 +19,14 @@ let
     cargo = rsToolchain;
     rustc = rsToolchain;
   };
+  cargoToml = lib.importTOML ../Cargo.toml;
 in
 
 naersk'.buildPackage (
   {
     src = ../.;
     strictDeps = true;
+    version = cargoToml.workspace.package.version;
 
     nativeBuildInputs = [ ] ++ lib.optionals stdenv.hostPlatform.isLinux [ pkg-config ];
 

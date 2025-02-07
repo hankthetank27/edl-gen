@@ -2,7 +2,7 @@
 
 ### Generate EDL files from live triggers
 
-EDLgen is a video broadcast, streaming and editing tool for generating EDL (Edit Decision List) files from custom, mappable, "edit events" synced over a live LTC/SMPTE timecode feed. EDLgen listens for incoming events over a network using a simple HTTP REST API. When an event request is received, it will log the event metadata (such as AV channels, edit type, tape number, etc.) into an EDL file with the corresponding timecode for the edit. This allows users to use arbitrary switching software or hardware, so long as it's capable of sending HTTP requests to log their live camera switches and automatically import them as edits into their editing software of choice.
+EDLgen is a video broadcast, streaming and editing tool for generating EDL (Edit Decision List) files from custom, mappable, "edit events" synced over a live LTC/SMPTE timecode feed. EDLgen listens for incoming events over a network using a simple HTTP REST API. When an event request is received, it will log the event data (such as AV channels, edit type, tape number, etc.) into an EDL file with the corresponding timecode for the edit. This allows users to use arbitrary switching software or hardware, so long as it's capable of sending HTTP requests to log their live camera switches and automatically import them as edits into their editing software of choice.
 
 ## Installation ##
 
@@ -57,20 +57,30 @@ Edit events in are received the form of HTTP requests made to the configured por
 
 ### Triggering Edit Events / API
 
-The event trigger API describes how the EDLgen server expects to receive events, and what type of metadata the events and ingest and log. 
+The event trigger API describes how the EDLgen server expects to receive events, and what type of data the events and ingest and log.
 
-To trigger an edit event, an HTTP POST request must be sent to the configured TCP port number, with a JSON payload containing the event metadata. For instance if you configured your port to be 9000, over your local network you would ping `127.0.0.1:9000/{even_name_here}`.
+To trigger an edit event, an HTTP request must be sent to the configured TCP port number, with a JSON payload containing the event data. For instance if you configured your port to be 9000, over your local network you would ping `127.0.0.1:9000/{even_name_here}`.
 
 #### Edit Events
 
-- **START** - POST to `127.0.0.1:{port_num}/start` - Triggers the creation of a new EDL file, the initialization of the LTC timecode decoding process, and the first edit log in the EDL. If there is no timecode signal present, the event will wait until a signal is detected before proceeding with logging, meaning you can trigger a start event before you actually start playback of your source. No subsequent events can be triggered until a **START** event has been received.
+Edit events are triggered from HTTP POST requests to the below endpoints. Each edit event request responds with the resulting [recording state](#recording-state), and information about the logged edit (if applicable). The response body for each of these events looks something like this:
 
-- **LOG** - POST to `127.0.0.1:{port_num}/log` - Triggers the logging of an edit once the EDL has been created and the LTC is decoding after a **START** event as been received. This will likely be the most used event type unless you plan on logging a single edit. 
+```typescript
+{
+    "recording_state": "started" | "stopped" | "waiting",
+    "edit": null | {...},
+    "final_edits": null | [{...}, ...] 
+}
+```
 
-- **END** - POST to `127.0.0.1:{port_num}/end` - Triggers the logging of the final edit in the EDL. Once this event is received the EDL file will be closed, and you can trigger a **START** event again to create a new EDL if desired.
+- **START** - POST to `127.0.0.1:{port_num}/start` - Triggers the creation of a new EDL file, the initialization of the LTC timecode decoding process, and the first edit log in the EDL. If there is no timecode signal present, the event will wait until a signal is detected before proceeding with logging, meaning you can trigger a start event before you actually start playback of your source. No subsequent events can be triggered until a **START** event has been received and LTC decoding has started (ie, the "started" recording state). This event responds with a `null` value in the `edit` and `final_edits` fields, as an edit is constructed from two events; an in and out point.
 
-##### Edit Event JSON Metadata
-Each event type expects the same JSON payload structure:
+- **LOG** - POST to `127.0.0.1:{port_num}/log` - Triggers the logging of an edit once the EDL has been created and the LTC is decoding after a **START** event as been received. This will likely be the most used event type unless you plan on logging a single edit. This event responds with information about the edit built in the `edit` field. This edit data is built from the prior edits out point timecode and source tape, and ends with the current timecode. 
+
+- **END** - POST to `127.0.0.1:{port_num}/end` - Triggers the logging of the final edit in the EDL. Once this event is received the EDL file will be closed, and you can trigger a **START** event again to create a new EDL if desired. This event does not require and in fact ignores any values in the `source_tape` and `edit_type` fields as the last edit should cut to black. This event responds with information about either one or two edits in the `final_edits`'s field. One if the final edit was a cut, two if it was a dissolve or a wipe.
+
+##### Edit Event JSON data
+Each event type expects roughly the same JSON payload structure, with optional attribute usage depending on the event or edit type:
 
 ```typescript
 {
@@ -78,7 +88,7 @@ Each event type expects the same JSON payload structure:
     "edit_duration_frames"?: number, 
     "wipe_num"?: number,
     "source_tape"?: string,   
-    "av_channels": {     
+    "av_channels"?: {     
         "video": boolean,     
         "audio": number   
     } 
@@ -90,7 +100,7 @@ Each event type expects the same JSON payload structure:
 
 - `wipe_num`: Optionally specifies which wipe should be used by the editing system (defaults to `1`). This value is ignored for cuts and dissolves.
 
-- `source_tape`: Optionally specifies the name of the of the tape the edit is being made for. This typically would be the name of the file the source of the video will correspond with in your editing software. The file extension might be needed in such a case depending on the editing software you use. If this filed is not included, EDLgen will attempt to use the preselected source tape which is set by the [**SELECT SOURCE** event](#other-events).
+- `source_tape`: Optionally specifies the name of the of the tape the edit is being made for. This typically would be the name of the file the source of the video will correspond with in your editing software. The file extension might be needed in such a case depending on the editing software you use. If this filed is not included, EDLgen will attempt to use the preselected source tape which is set by the [**SELECT SOURCE**](#other-events) event.
 
 - `av_channels`: Specifies the video and audio channels.
     - `video`: Specifies if the channel contains video.
@@ -99,6 +109,7 @@ Each event type expects the same JSON payload structure:
 
 Examples...
 ```json
+// A log event to a preselect source
 {   
     "edit_type": "cut",   
     "source_tape": "clip2",   
@@ -109,6 +120,7 @@ Examples...
 }
 ```
 ```json
+// An 18 frame wipe
 {   
     "edit_type": "wipe",
     "edit_duration_frames": 18,
@@ -118,6 +130,13 @@ Examples...
         "video": true,
         "audio": 2   
     } 
+}
+```
+```json
+// An END event. No source_tape or av_channels is needed as it cuts to black!
+{   
+    "edit_type": "dissolve",
+    "edit_duration_frames": 25,
 }
 ```
 #### Other Events
@@ -132,6 +151,17 @@ Examples...
 }
 ```
 - `source_tape`: Specifies the name of the of the tape the edit is being made for.
+
+#### Recording State
+Once EDLgen's server is started, it can be in 1 of 3 possible "recording states":
+
+- **stopped** - The server is online but no request has been made to start recording an EDL. 
+- **waiting** - A request has been made to start recording an EDL, but an LTC signal has still not received or detected, and the recording process has not begun .
+- **started** - The LTC signal has been detected, and the EDL recording has begun.
+
+You can ask EDLgen for what recording state it's currently in:
+
+- GET to `127.0.0.1:{port_num}/edl-recording-state` 
 
 ### Planned Features and TODO
 - Handle speed changes
