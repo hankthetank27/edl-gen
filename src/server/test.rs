@@ -87,7 +87,7 @@ impl MockServer {
             if std::net::TcpStream::connect(&addr).is_ok() {
                 return self;
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
         }
         panic!("Server did not start on {}", addr);
     }
@@ -247,7 +247,10 @@ fn edit_starts_ends_cut() {
         .unwrap();
     assert_eq!(wipe_1_res.status_code, 200);
     assert_eq!(wipe_1_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_1_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(
+        wipe_1_res.cut().source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(wipe_1_res.cut().av_channels, AVChannels::new(false, 1));
 
     let cut_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -263,9 +266,15 @@ fn edit_starts_ends_cut() {
         .unwrap();
     assert_eq!(cut_2_res.status_code, 200);
     assert_eq!(cut_2_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_2_res.wipe().from.source_tape, "tape1".to_string());
+    assert_eq!(
+        cut_2_res.wipe().from.source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(cut_2_res.wipe().from.av_channels, AVChannels::new(false, 1));
-    assert_eq!(cut_2_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        cut_2_res.wipe().to.source_tape.to_string(),
+        "tape2".to_string()
+    );
     assert_eq!(cut_2_res.wipe().to.av_channels, AVChannels::new(true, 2));
 
     let wipe_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -281,7 +290,10 @@ fn edit_starts_ends_cut() {
         .unwrap();
     assert_eq!(wipe_2_res.status_code, 200);
     assert_eq!(wipe_2_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_2_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(
+        wipe_2_res.cut().source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(wipe_2_res.cut().av_channels, AVChannels::new(true, 2));
 
     let dis_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -297,9 +309,15 @@ fn edit_starts_ends_cut() {
         .unwrap();
     assert_eq!(dis_1_res.rec_state(), EdlRecordingState::Started);
     assert_eq!(dis_1_res.status_code, 200);
-    assert_eq!(dis_1_res.wipe().from.source_tape, "tape1".to_string());
+    assert_eq!(
+        dis_1_res.wipe().from.source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(dis_1_res.wipe().from.av_channels, AVChannels::new(true, 2));
-    assert_eq!(dis_1_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        dis_1_res.wipe().to.source_tape.to_string(),
+        "tape2".to_string()
+    );
     assert_eq!(dis_1_res.wipe().to.av_channels, AVChannels::new(false, 3));
 
     let cut_3_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -315,8 +333,14 @@ fn edit_starts_ends_cut() {
         .unwrap();
     assert_eq!(cut_3_res.status_code, 200);
     assert_eq!(cut_3_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_3_res.dissolve().from.source_tape, "tape2".to_string());
-    assert_eq!(cut_3_res.dissolve().to.source_tape, "tape1".to_string());
+    assert_eq!(
+        cut_3_res.dissolve().from.source_tape.to_string(),
+        "tape2".to_string()
+    );
+    assert_eq!(
+        cut_3_res.dissolve().to.source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(
         cut_3_res.dissolve().to.av_channels,
         AVChannels::new(true, 2)
@@ -335,7 +359,7 @@ fn edit_starts_ends_cut() {
         .unwrap();
     assert_eq!(cut_4_res.status_code, 200);
     assert_eq!(cut_4_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_4_res.cut().source_tape, "tape3".to_string());
+    assert_eq!(cut_4_res.cut().source_tape.to_string(), "tape3".to_string());
     assert_eq!(cut_4_res.cut().av_channels, AVChannels::new(true, 2));
 
     let end_res = minreq::post(format!("http://127.0.0.1:{port}/end"))
@@ -352,7 +376,7 @@ fn edit_starts_ends_cut() {
     assert_eq!(end_res.status_code, 200);
     assert_eq!(end_res.rec_state(), EdlRecordingState::Stopped);
     assert_eq!(
-        end_res.final_edits()[0].cut().source_tape,
+        end_res.final_edits()[0].cut().source_tape.to_string(),
         "tape1".to_string()
     );
     assert_eq!(
@@ -404,7 +428,10 @@ fn edit_starts_cut_ends_diss() {
         .unwrap();
     assert_eq!(wipe_1_res.status_code, 200);
     assert_eq!(wipe_1_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_1_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(
+        wipe_1_res.cut().source_tape.to_string().to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(wipe_1_res.cut().av_channels, AVChannels::new(false, 1));
 
     let cut_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -420,9 +447,15 @@ fn edit_starts_cut_ends_diss() {
         .unwrap();
     assert_eq!(cut_2_res.status_code, 200);
     assert_eq!(cut_2_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_2_res.wipe().from.source_tape, "tape1".to_string());
+    assert_eq!(
+        cut_2_res.wipe().from.source_tape.to_string().to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(cut_2_res.wipe().from.av_channels, AVChannels::new(false, 1));
-    assert_eq!(cut_2_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        cut_2_res.wipe().to.source_tape.to_string().to_string(),
+        "tape2".to_string()
+    );
     assert_eq!(cut_2_res.wipe().to.av_channels, AVChannels::new(true, 2));
 
     let wipe_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -438,7 +471,10 @@ fn edit_starts_cut_ends_diss() {
         .unwrap();
     assert_eq!(wipe_2_res.status_code, 200);
     assert_eq!(wipe_2_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_2_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(
+        wipe_2_res.cut().source_tape.to_string().to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(wipe_2_res.cut().av_channels, AVChannels::new(true, 2));
 
     let dis_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -454,9 +490,15 @@ fn edit_starts_cut_ends_diss() {
         .unwrap();
     assert_eq!(dis_1_res.rec_state(), EdlRecordingState::Started);
     assert_eq!(dis_1_res.status_code, 200);
-    assert_eq!(dis_1_res.wipe().from.source_tape, "tape1".to_string());
+    assert_eq!(
+        dis_1_res.wipe().from.source_tape.to_string().to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(dis_1_res.wipe().from.av_channels, AVChannels::new(true, 2));
-    assert_eq!(dis_1_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        dis_1_res.wipe().to.source_tape.to_string().to_string(),
+        "tape2".to_string()
+    );
     assert_eq!(dis_1_res.wipe().to.av_channels, AVChannels::new(false, 3));
 
     let cut_3_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -472,8 +514,19 @@ fn edit_starts_cut_ends_diss() {
         .unwrap();
     assert_eq!(cut_3_res.status_code, 200);
     assert_eq!(cut_3_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_3_res.dissolve().from.source_tape, "tape2".to_string());
-    assert_eq!(cut_3_res.dissolve().to.source_tape, "tape1".to_string());
+    assert_eq!(
+        cut_3_res
+            .dissolve()
+            .from
+            .source_tape
+            .to_string()
+            .to_string(),
+        "tape2".to_string()
+    );
+    assert_eq!(
+        cut_3_res.dissolve().to.source_tape.to_string().to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(
         cut_3_res.dissolve().to.av_channels,
         AVChannels::new(true, 2)
@@ -492,7 +545,10 @@ fn edit_starts_cut_ends_diss() {
         .unwrap();
     assert_eq!(cut_4_res.status_code, 200);
     assert_eq!(cut_4_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_4_res.cut().source_tape, "tape3".to_string());
+    assert_eq!(
+        cut_4_res.cut().source_tape.to_string().to_string(),
+        "tape3".to_string()
+    );
     assert_eq!(cut_4_res.cut().av_channels, AVChannels::new(true, 2));
 
     let end_res = minreq::post(format!("http://127.0.0.1:{port}/end"))
@@ -509,7 +565,11 @@ fn edit_starts_cut_ends_diss() {
     assert_eq!(end_res.status_code, 200);
     assert_eq!(end_res.rec_state(), EdlRecordingState::Stopped);
     assert_eq!(
-        end_res.final_edits()[0].cut().source_tape,
+        end_res.final_edits()[0]
+            .cut()
+            .source_tape
+            .to_string()
+            .to_string(),
         "tape1".to_string()
     );
     assert_eq!(
@@ -517,7 +577,12 @@ fn edit_starts_cut_ends_diss() {
         AVChannels::new(true, 2)
     );
     assert_eq!(
-        end_res.final_edits()[1].dissolve().from.source_tape,
+        end_res.final_edits()[1]
+            .dissolve()
+            .from
+            .source_tape
+            .to_string()
+            .to_string(),
         "tape1".to_string()
     );
     assert_eq!(
@@ -525,7 +590,12 @@ fn edit_starts_cut_ends_diss() {
         AVChannels::new(true, 2)
     );
     assert_eq!(
-        end_res.final_edits()[1].dissolve().to.source_tape,
+        end_res.final_edits()[1]
+            .dissolve()
+            .to
+            .source_tape
+            .to_string()
+            .to_string(),
         "BL".to_string()
     );
     assert_eq!(
@@ -577,12 +647,18 @@ fn edit_starts_diss_ends_cut() {
         .unwrap();
     assert_eq!(wipe_1_res.status_code, 200);
     assert_eq!(wipe_1_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_1_res.dissolve().from.source_tape, "BL".to_string());
+    assert_eq!(
+        wipe_1_res.dissolve().from.source_tape.to_string(),
+        "BL".to_string()
+    );
     assert_eq!(
         wipe_1_res.dissolve().from.av_channels,
         AVChannels::new(true, 0)
     );
-    assert_eq!(wipe_1_res.dissolve().to.source_tape, "tape1".to_string());
+    assert_eq!(
+        wipe_1_res.dissolve().to.source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(
         wipe_1_res.dissolve().to.av_channels,
         AVChannels::new(false, 1)
@@ -601,9 +677,15 @@ fn edit_starts_diss_ends_cut() {
         .unwrap();
     assert_eq!(cut_1_res.status_code, 200);
     assert_eq!(cut_1_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(cut_1_res.wipe().from.source_tape, "tape1".to_string());
+    assert_eq!(
+        cut_1_res.wipe().from.source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(cut_1_res.wipe().from.av_channels, AVChannels::new(false, 1));
-    assert_eq!(cut_1_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        cut_1_res.wipe().to.source_tape.to_string(),
+        "tape2".to_string()
+    );
     assert_eq!(cut_1_res.wipe().to.av_channels, AVChannels::new(true, 2));
 
     let wipe_2_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -619,7 +701,10 @@ fn edit_starts_diss_ends_cut() {
         .unwrap();
     assert_eq!(wipe_2_res.status_code, 200);
     assert_eq!(wipe_2_res.rec_state(), EdlRecordingState::Started);
-    assert_eq!(wipe_2_res.cut().source_tape, "tape1".to_string());
+    assert_eq!(
+        wipe_2_res.cut().source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(wipe_2_res.cut().av_channels, AVChannels::new(true, 2));
 
     let dis_1_res = minreq::post(format!("http://127.0.0.1:{port}/log"))
@@ -635,9 +720,15 @@ fn edit_starts_diss_ends_cut() {
         .unwrap();
     assert_eq!(dis_1_res.rec_state(), EdlRecordingState::Started);
     assert_eq!(dis_1_res.status_code, 200);
-    assert_eq!(dis_1_res.wipe().from.source_tape, "tape1".to_string());
+    assert_eq!(
+        dis_1_res.wipe().from.source_tape.to_string(),
+        "tape1".to_string()
+    );
     assert_eq!(dis_1_res.wipe().from.av_channels, AVChannels::new(true, 2));
-    assert_eq!(dis_1_res.wipe().to.source_tape, "tape2".to_string());
+    assert_eq!(
+        dis_1_res.wipe().to.source_tape.to_string(),
+        "tape2".to_string()
+    );
     assert_eq!(dis_1_res.wipe().to.av_channels, AVChannels::new(false, 3));
 
     let end_res = minreq::post(format!("http://127.0.0.1:{port}/end"))
@@ -654,7 +745,11 @@ fn edit_starts_diss_ends_cut() {
     assert_eq!(end_res.status_code, 200);
     assert_eq!(end_res.rec_state(), EdlRecordingState::Stopped);
     assert_eq!(
-        end_res.final_edits()[0].dissolve().from.source_tape,
+        end_res.final_edits()[0]
+            .dissolve()
+            .from
+            .source_tape
+            .to_string(),
         "tape2".to_string()
     );
     assert_eq!(
@@ -662,7 +757,11 @@ fn edit_starts_diss_ends_cut() {
         AVChannels::new(false, 3)
     );
     assert_eq!(
-        end_res.final_edits()[0].dissolve().to.source_tape,
+        end_res.final_edits()[0]
+            .dissolve()
+            .to
+            .source_tape
+            .to_string(),
         "tape1".to_string()
     );
     assert_eq!(
@@ -912,7 +1011,7 @@ fn edit_events_with_preselected_src_2() {
     assert_eq!(end_res.status_code, 200);
     assert_eq!(end_res.rec_state(), EdlRecordingState::Stopped);
     assert_eq!(
-        end_res.final_edits()[0].cut().source_tape,
+        end_res.final_edits()[0].cut().source_tape.to_string(),
         "tape2".to_string()
     );
     assert_eq!(
@@ -920,7 +1019,11 @@ fn edit_events_with_preselected_src_2() {
         AVChannels::new(true, 2)
     );
     assert_eq!(
-        end_res.final_edits()[1].dissolve().from.source_tape,
+        end_res.final_edits()[1]
+            .dissolve()
+            .from
+            .source_tape
+            .to_string(),
         "tape2".to_string()
     );
     assert_eq!(
@@ -928,7 +1031,11 @@ fn edit_events_with_preselected_src_2() {
         AVChannels::new(true, 2)
     );
     assert_eq!(
-        end_res.final_edits()[1].dissolve().to.source_tape,
+        end_res.final_edits()[1]
+            .dissolve()
+            .to
+            .source_tape
+            .to_string(),
         "BL".to_string()
     );
     assert_eq!(
@@ -1153,7 +1260,10 @@ fn event_non_ready() {
     assert_eq!(end_before_start.status_code, 200);
     assert_eq!(end_before_start.rec_state(), EdlRecordingState::Stopped);
     assert_eq!(
-        end_before_start.final_edits()[0].cut().source_tape,
+        end_before_start.final_edits()[0]
+            .cut()
+            .source_tape
+            .to_string(),
         "BL".to_string()
     );
 

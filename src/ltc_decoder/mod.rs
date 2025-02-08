@@ -280,13 +280,13 @@ impl DecodeHandlers {
     pub fn decode_on(&self) -> Result<(), Error> {
         self.tx_decode_state
             .send(DecodeState::On)
-            .context("Unable message decoding to start")
+            .context("Unable to send message, decoding start")
     }
 
     pub fn decode_off(&self) -> Result<(), Error> {
         self.tx_decode_state
             .send(DecodeState::Off)
-            .context("Unable message decoding to shut off")
+            .context("Unable to send message - decoding off")
     }
 
     pub fn stop_ltc_listener(&self) -> Result<(), Error> {

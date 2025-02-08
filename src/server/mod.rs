@@ -441,7 +441,7 @@ impl EditRequestData {
                 DecodeErr::Timeout => StartErr::Timeout,
                 _ => StartErr::Anyhow(anyhow!("Error decoding frame: {e}")),
             })?;
-        log::info!("LTC signal detected. Recording to EDL");
+        log::info!("LTC signal detected. Recording to EDL.");
         Ok(ResBody::new(
             ctx_guard.set_rec_state(EdlRecordingState::Started),
             None,

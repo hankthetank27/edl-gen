@@ -109,7 +109,7 @@ Each event type expects roughly the same JSON payload structure, with optional a
 
 Examples...
 ```typescript
-// A log event to a preselect source
+// A log event to a preselected source
 {   
     "edit_type": "cut",   
     "source_tape": "clip2",   
