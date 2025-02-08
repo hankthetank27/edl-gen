@@ -87,7 +87,7 @@ impl MockServer {
             if std::net::TcpStream::connect(&addr).is_ok() {
                 return self;
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
         }
         panic!("Server did not start on {}", addr);
     }
@@ -117,7 +117,6 @@ trait JsonData {
 
 impl JsonData for minreq::Response {
     fn rec_state(&self) -> EdlRecordingState {
-        println!("json --------- {:#?}", self.as_str());
         self.json::<ResBody>().unwrap().recording_state
     }
 

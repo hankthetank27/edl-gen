@@ -331,7 +331,13 @@ impl From<AVChannels> for String {
     fn from(value: AVChannels) -> Self {
         (1..=std::cmp::min(value.audio, 4)).fold(
             if value.video { "V" } else { "" }.to_string(),
-            |acc, curr| format!("{acc}A{curr}"),
+            |acc, curr| {
+                if curr == 1 && acc == "V" {
+                    format!("A/{acc}")
+                } else {
+                    format!("A{acc}")
+                }
+            },
         )
     }
 }
@@ -408,7 +414,9 @@ impl EdlEditLine {
         Ok(EdlEditLine {
             edit_number: validate_num_size(clip.edit_number as u32)?,
             source_tape: clip.source_tape.as_source_type().into(),
-            av_channels: postfix_spaces(&String::from(clip.av_channels), 9),
+            av_channels: String::from(clip.av_channels)
+                .as_str()
+                .prefix_char_to_len(6, b' '),
             source_in: clip.source_in.timecode(),
             source_out: clip.source_out.timecode(),
             record_in: clip.record_in.timecode(),
@@ -422,7 +430,7 @@ impl EdlEditLine {
 impl From<EdlEditLine> for String {
     fn from(value: EdlEditLine) -> Self {
         format!(
-            "{}  {}  {} {} {} {} {} {} {}",
+            "{}  {}  {}  {} {} {} {} {} {}",
             value.edit_number,
             value.source_tape,
             value.av_channels,
@@ -436,11 +444,16 @@ impl From<EdlEditLine> for String {
     }
 }
 
-fn postfix_spaces(string: &str, len: usize) -> String {
-    assert!(string.len() <= len);
-    let spaces = String::from_utf8(vec![b' '; std::cmp::max(len - string.len(), 0)])
-        .unwrap_or_else(|_| "".to_string());
-    format!("{string}{spaces}")
+trait Prefix {
+    fn prefix_char_to_len(&self, len: usize, byte_char: u8) -> String;
+}
+
+impl Prefix for &str {
+    fn prefix_char_to_len(&self, len: usize, byte_char: u8) -> String {
+        let spaces = String::from_utf8(vec![byte_char; len.saturating_sub(self.len())])
+            .unwrap_or_else(|_| "".to_string());
+        format!("{spaces}{self}")
+    }
 }
 
 // TODO: this should handle edit duration seperately
@@ -448,8 +461,7 @@ fn validate_num_size(num: u32) -> Result<String, Error> {
     match num.cmp(&1000) {
         Ordering::Less => {
             let num = num.to_string();
-            let prepend_zeros = String::from_utf8(vec![b'0'; 3 - num.len()])?;
-            Ok(format!("{prepend_zeros}{num}"))
+            Ok(num.as_str().prefix_char_to_len(3, b'0'))
         }
         _ => Err(anyhow!("Cannot exceed 999 edits")),
     }
@@ -497,27 +509,34 @@ mod test {
 
     #[test]
     fn av_channels_from_str() {
-        assert_eq!(String::from(AVChannels::default()), "VA1A2".to_string());
+        assert_eq!(String::from(AVChannels::default()), "AA/V".to_string());
         assert_eq!(
             String::from(AVChannels {
                 video: false,
                 audio: 1
             }),
-            "A1".to_string()
+            "A".to_string()
+        );
+        assert_eq!(
+            String::from(AVChannels {
+                video: false,
+                audio: 2
+            }),
+            "AA".to_string()
         );
         assert_eq!(
             String::from(AVChannels {
                 video: true,
                 audio: 4
             }),
-            "VA1A2A3A4".to_string()
+            "AAAA/V".to_string()
         );
         assert_eq!(
             String::from(AVChannels {
                 video: true,
                 audio: 10
             }),
-            "VA1A2A3A4".to_string()
+            "AAAA/V".to_string()
         );
         assert_eq!(
             String::from(AVChannels {
@@ -711,7 +730,7 @@ mod test {
         let clip_2 = Clip {
             edit_number: 2,
             source_tape: Some(&"test_clip_2.mov".to_string()).into(),
-            av_channels: AVChannels::default(),
+            av_channels: AVChannels::new(true, 3),
             source_in: tc_3,
             source_out: tc_4,
             record_in: tc_3,
@@ -721,7 +740,7 @@ mod test {
         let cut = &Edit::Cut(clip_1.clone());
         let cut_string: String = cut.try_into().unwrap();
         let cut_cmp: String = "
-001  AX  VA1A2     C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+001  AX    AA/V  C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
 * FROM CLIP NAME: test_clip.mov"
             .into();
         assert_eq!(cut_string, cut_cmp);
@@ -734,8 +753,8 @@ mod test {
         });
         let wipe_string: String = wipe.try_into().unwrap();
         let wipe_cmp: String = "
-001  AX  VA1A2     C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
-002  AX  VA1A2     W001 015 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
+001  AX    AA/V  C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+002  AX   AAA/V  W001 015 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
 * FROM CLIP NAME: test_clip.mov
 * TO CLIP NAME: test_clip_2.mov"
             .into();
@@ -748,8 +767,8 @@ mod test {
         });
         let dissolve_string: String = dissove.try_into().unwrap();
         let dissove_cmp: String = "
-001  AX  VA1A2     C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
-002  AX  VA1A2     D    000 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
+001  AX    AA/V  C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
+002  AX   AAA/V  D    000 01:10:00:00 01:15:00:00 01:10:00:00 01:15:00:00
 * FROM CLIP NAME: test_clip.mov
 * TO CLIP NAME: test_clip_2.mov"
             .into();
