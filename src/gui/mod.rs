@@ -13,6 +13,7 @@ use std::{
         mpsc, Arc,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use crate::{
@@ -125,12 +126,9 @@ impl App {
                         Ok(())
                     };
 
-                    let _ = signal_shutdown();
+                    signal_shutdown().ok();
 
-                    if let Err(e) = self
-                        .rx_serv_stopped
-                        .recv_timeout(std::time::Duration::from_secs(3))
-                    {
+                    if let Err(e) = self.rx_serv_stopped.recv_timeout(Duration::from_secs(3)) {
                         self.server_handle = Some(handle);
                         return Err(anyhow!("Could not kill server: {}", e));
                     }

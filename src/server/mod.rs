@@ -15,6 +15,7 @@ use std::{
 };
 
 use crate::edl_writer::frame_queue::EditType;
+use crate::edl_writer::SourceTape;
 use crate::{
     edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair},
     ltc_decoder::{DecodeErr, DecodeHandlers},
@@ -422,12 +423,13 @@ impl EditRequestData {
 
     // TODO: warn if source_tape or av_channels is None here
     fn try_log_edit(&mut self, ctx_guard: &mut MutexGuard<ContextInner>) -> Result<ResBody, Error> {
+        let edit = self
+            .map_source_from_ctx(ctx_guard)
+            .write_edit_to_edl(ctx_guard)?
+            .map_source_to_ctx(ctx_guard);
         Ok(ResBody::new(
             EdlRecordingState::Started,
-            Some(EditBody::Edit(
-                self.map_selected_source(ctx_guard)
-                    .write_edit_to_edl(ctx_guard)?,
-            )),
+            Some(EditBody::Edit(edit)),
         ))
     }
 
@@ -435,7 +437,7 @@ impl EditRequestData {
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
     ) -> Result<ResBody, StartErr> {
-        self.map_selected_source(ctx_guard)
+        self.map_source_from_ctx(ctx_guard)
             .try_queue_current_frame(ctx_guard)
             .map_err(|e| match e {
                 DecodeErr::Timeout => StartErr::Timeout,
@@ -506,7 +508,7 @@ impl EditRequestData {
         Ok(())
     }
 
-    pub fn map_selected_source(&mut self, ctx_guard: &MutexGuard<ContextInner>) -> &mut Self {
+    fn map_source_from_ctx(&mut self, ctx_guard: &MutexGuard<ContextInner>) -> &mut Self {
         if self.source_tape.is_none() {
             self.source_tape = ctx_guard.selected_src_data.source_tape.clone();
         }
@@ -519,7 +521,7 @@ impl EditRequestData {
     fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<ResBody, Error> {
         let decode_handlers = Arc::clone(&ctx.lock().decode_handlers);
         let tc = decode_handlers.recv_frame()?;
-        self.map_selected_source(&ctx.lock());
+        self.map_source_from_ctx(&ctx.lock());
 
         let mut ctx_guard = ctx.lock();
         ctx_guard.frame_queue.push(tc, self)?;
@@ -528,6 +530,16 @@ impl EditRequestData {
             ctx_guard.set_rec_state(EdlRecordingState::Started),
             None,
         ))
+    }
+}
+
+impl Edit {
+    fn map_source_to_ctx(self, ctx_guard: &mut MutexGuard<ContextInner>) -> Self {
+        let source_tape: &SourceTape = (&self).into();
+        let av_channels: AVChannels = (&self).into();
+        ctx_guard.selected_src_data.source_tape = source_tape.into();
+        ctx_guard.selected_src_data.av_channels = av_channels.into();
+        self
     }
 }
 

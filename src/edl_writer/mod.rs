@@ -131,6 +131,26 @@ impl Edit {
     }
 }
 
+impl<'a> From<&'a Edit> for &'a SourceTape {
+    fn from(edit: &'a Edit) -> Self {
+        match edit {
+            Edit::Cut(clip) => &clip.source_tape,
+            Edit::Dissolve(dissolve) => &dissolve.to.source_tape,
+            Edit::Wipe(wipe) => &wipe.to.source_tape,
+        }
+    }
+}
+
+impl From<&Edit> for AVChannels {
+    fn from(edit: &Edit) -> Self {
+        match edit {
+            Edit::Cut(clip) => clip.av_channels,
+            Edit::Dissolve(dissolve) => dissolve.to.av_channels,
+            Edit::Wipe(wipe) => wipe.to.av_channels,
+        }
+    }
+}
+
 impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
     type Error = Error;
 
@@ -304,6 +324,15 @@ impl From<&SourceTape> for String {
         match src_tape {
             SourceTape::AX(name) => name.into(),
             SourceTape::BL => src_tape.as_source_type().into(),
+        }
+    }
+}
+
+impl From<&SourceTape> for Option<String> {
+    fn from(src_tape: &SourceTape) -> Self {
+        match src_tape {
+            SourceTape::AX(name) => Some(name.into()),
+            SourceTape::BL => None,
         }
     }
 }
