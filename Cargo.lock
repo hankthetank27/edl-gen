@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "edl-gen"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "cpal",
@@ -3662,7 +3662,7 @@ dependencies = [
 
 [[package]]
 name = "test_support"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "cpal",
