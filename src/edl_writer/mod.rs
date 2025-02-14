@@ -1,4 +1,4 @@
-//// CMX3600 EDL
+// CMX3600 EDL
 // https://xmil.biz/EDL-X/CMX3600.pdf
 // https://www.edlmax.com/EdlMaxHelp/Edl/maxguide.html
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
