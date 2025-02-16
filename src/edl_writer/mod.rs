@@ -51,8 +51,9 @@ impl Edl {
         }
 
         let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
-        file.write_all(format!("TITLE: {}\n", opt.title).as_bytes())?;
-        file.write_all(format!("FCM: {}", String::from(opt.ntsc)).as_bytes())?;
+        file.write_all(
+            format!("TITLE: {}\nFCM: {}", opt.title, String::from(opt.ntsc)).as_bytes(),
+        )?;
         file.flush()?;
         Ok(Edl { file })
     }
@@ -119,10 +120,9 @@ pub enum Edit {
 impl Edit {
     fn get_strs(&self) -> Result<(String, String), Error> {
         let c = "C   ".into();
-        let d = "D   ".into();
         match self {
             Edit::Cut(_) => Ok((c, "".into())),
-            Edit::Dissolve(_) => Ok((c, d)),
+            Edit::Dissolve(_) => Ok((c, "D   ".into())),
             Edit::Wipe(w) => {
                 let num_str = validate_num_size(w.wipe_number)?;
                 Ok((c, format!("W{num_str}")))
@@ -319,11 +319,11 @@ impl From<Option<&String>> for SourceTape {
     }
 }
 
-impl From<&SourceTape> for String {
-    fn from(src_tape: &SourceTape) -> Self {
+impl<'a> From<&'a SourceTape> for &'a str {
+    fn from(src_tape: &'a SourceTape) -> Self {
         match src_tape {
-            SourceTape::AX(name) => name.into(),
-            SourceTape::BL => src_tape.as_source_type().into(),
+            SourceTape::AX(name) => name.as_str(),
+            SourceTape::BL => src_tape.as_source_type(),
         }
     }
 }
@@ -406,7 +406,7 @@ impl Serialize for Clip {
     {
         let mut state = serializer.serialize_struct("Clip", 7)?;
         state.serialize_field("edit_number", &self.edit_number)?;
-        state.serialize_field("source_tape", &String::from(&self.source_tape))?;
+        state.serialize_field("source_tape", <&str>::from(&self.source_tape))?;
         state.serialize_field("av_channels", &self.av_channels)?;
         state.serialize_field("source_in", &self.source_in.timecode())?;
         state.serialize_field("source_out", &self.source_out.timecode())?;
@@ -503,7 +503,7 @@ mod test {
 
     impl ToString for SourceTape {
         fn to_string(&self) -> String {
-            String::from(self)
+            <&str>::from(self).to_string()
         }
     }
 
@@ -724,10 +724,7 @@ mod test {
         let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
-        assert_eq!(
-            String::from(&edit.wipe().from.source_tape),
-            "tape0".to_string()
-        );
+        assert_eq!(<&str>::from(&edit.wipe().from.source_tape), "tape0");
         assert_eq!(edit.wipe().to.source_tape.to_string(), "tape1".to_string());
         assert_eq!(edit.wipe().from.source_in, edit.wipe().from.source_out);
         assert!(edit.wipe().to.source_in < edit.wipe().to.source_out);

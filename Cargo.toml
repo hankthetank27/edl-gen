@@ -18,7 +18,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.86"
-cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde" }
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "33b8919516e950ce770f7b63e144ac54d6556ea0" }
 dirs = "5.0.1"
 eframe = "0.27.2"
 font-kit = "0.14.2"
@@ -37,7 +37,7 @@ sled = "0.34.7"
 vtc = "0.1.13"
 
 [target.'cfg(windows)'.dependencies]
-cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde", features = ["asio"] }
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "33b8919516e950ce770f7b63e144ac54d6556ea0", features = ["asio"] }
 
 [dev-dependencies]
 test_support = { path = "crates/test-support"}

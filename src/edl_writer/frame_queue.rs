@@ -61,7 +61,7 @@ impl FrameQueue {
                 video: true,
                 audio: 0,
             });
-        let record = FrameData::try_from_edit(
+        let record = FrameData::try_from_edit_data(
             edit_data,
             prev_tape,
             prev_av_channels,
@@ -109,7 +109,7 @@ pub struct FrameData {
 }
 
 impl FrameData {
-    pub fn try_from_edit(
+    pub fn try_from_edit_data(
         edit: EditData,
         prev_tape: Option<String>,
         prev_av_channels: AVChannels,
@@ -164,7 +164,6 @@ impl FrameData {
 
 impl TryFrom<&str> for EditType {
     type Error = Error;
-
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value.to_lowercase().as_str() {
             "cut" => Ok(EditType::Cut),

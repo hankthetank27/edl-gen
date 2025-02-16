@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.86"
-cpal = { git = "https://github.com/hankthetank27/cpal.git", rev = "40ed54d5941017ec1284a2e369a88db058ae7fde" }
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "33b8919516e950ce770f7b63e144ac54d6556ea0" }
 hound = "3.4"
 itertools = "0.14.0"
 parking_lot = "0.12.3"

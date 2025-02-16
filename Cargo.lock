@@ -250,7 +250,7 @@ dependencies = [
 [[package]]
 name = "asio-sys"
 version = "0.2.2"
-source = "git+https://github.com/hankthetank27/cpal.git?rev=40ed54d5941017ec1284a2e369a88db058ae7fde#40ed54d5941017ec1284a2e369a88db058ae7fde"
+source = "git+https://github.com/RustAudio/cpal?rev=33b8919516e950ce770f7b63e144ac54d6556ea0#33b8919516e950ce770f7b63e144ac54d6556ea0"
 dependencies = [
  "bindgen 0.69.5",
  "cc",
@@ -1025,7 +1025,7 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.15.3"
-source = "git+https://github.com/hankthetank27/cpal.git?rev=40ed54d5941017ec1284a2e369a88db058ae7fde#40ed54d5941017ec1284a2e369a88db058ae7fde"
+source = "git+https://github.com/RustAudio/cpal?rev=33b8919516e950ce770f7b63e144ac54d6556ea0#33b8919516e950ce770f7b63e144ac54d6556ea0"
 dependencies = [
  "alsa",
  "asio-sys",
