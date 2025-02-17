@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Context as AnyhowCtx, Error};
-use httparse::{Request as ReqParser, Status};
+use httparse::{Header, Request as ReqParser, Status};
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tungstenite::WebSocket;
 
 use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
@@ -10,6 +11,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 use std::{
+    str,
     sync::{mpsc, Arc},
     thread,
 };
@@ -50,6 +52,7 @@ impl Server {
             selected_src_data: SourceTapeRequestData::default(),
             decode_handlers: Arc::new(decode_handlers),
             tx_ltc_wait_worker,
+            ws_client: None,
             edl: None,
             opt,
         }));
@@ -70,7 +73,9 @@ impl Server {
         });
 
         for stream in listener.incoming() {
-            self.handle_connection(stream?, &mut ctx)
+            stream
+                .context("Error in incoming stream")
+                .and_then(|s| self.handle_connection(s, &mut ctx))
                 .unwrap_or_else(|e| {
                     log::error!("Server error: {:#}", e);
                 });
@@ -88,23 +93,87 @@ impl Server {
 
     fn handle_connection(&mut self, mut socket: TcpStream, ctx: &mut Context) -> Result<(), Error> {
         let mut buf_reader = BufReader::new(&mut socket);
-        let mut headers = [httparse::EMPTY_HEADER; 16];
-        let mut headers = ReqParser::new(&mut headers);
+        let mut headers_buff = [httparse::EMPTY_HEADER; 16];
+        let mut req_raw = ReqParser::new(&mut headers_buff);
 
         let res = buf_reader
             .fill_buf()
             .context("Unable to fill buffer")
-            .and_then(|buf| Request::new(&mut headers, buf))
-            .and_then(|mut req| req.route(ctx))
-            .and_then(|res| res.json())
+            .and_then(|buf| Request::new(&mut req_raw, buf))
+            .and_then(|mut req| {
+                if UpgradeRequest::from_headers(req.headers).is_ws() {
+                    Ok(Connection::WebSocketHandshake)
+                } else {
+                    let res = req.route(ctx).and_then(|res| res.json())?;
+                    Ok(Connection::HTTP(res))
+                }
+            })
             .unwrap_or_else(|e| {
                 log::error!("Error processing request: {:#}", e);
-                server_err()
+                Connection::HTTP(server_err())
             });
 
-        socket
-            .write_all(SerializedResponse::from(res).value.as_bytes())
-            .context("Response could not be sent")
+        match res {
+            Connection::WebSocketHandshake => {
+                log::info!("Attemping to establish connection...");
+
+                // TODO: This doesn't work (and hangs) because the socket stream is already consumed by the
+                // BufReader to parse the request. Either we will need to put the WS server on a different
+                // port, or implement the handshake from scratch.
+                //
+                // We would using something like WebSocket::from_raw_socket()
+                //
+                ctx.lock().ws_client = tungstenite::accept(socket)
+                    .inspect_err(|e| {
+                        log::error!("Unable to establish websocket connection: {:#?}", e);
+                    })
+                    .map(|ws| {
+                        log::info!("Websocket connection established: {:#?}", ws);
+                        ws
+                    })
+                    .ok();
+                Ok(())
+            }
+            Connection::HTTP(res) => socket
+                .write_all(SerializedResponse::from(res).value.as_bytes())
+                .context("Response could not be sent"),
+        }
+    }
+}
+
+enum Connection {
+    WebSocketHandshake,
+    HTTP(Response),
+}
+
+#[derive(Default)]
+struct UpgradeRequest {
+    connection: Option<String>,
+    upgrade: Option<String>,
+}
+
+impl UpgradeRequest {
+    fn from_headers(headers: &[Header]) -> Self {
+        let to_val = |v| str::from_utf8(v).ok().map(|v| v.to_lowercase());
+        headers
+            .iter()
+            .fold(UpgradeRequest::default(), |mut acc, header| {
+                println!("name: {:#?}", header.name);
+                println!("value: {:#?}", to_val(header.value));
+                let header_name = header.name.to_lowercase();
+                if header_name.as_str() == "connection" {
+                    acc.connection = to_val(header.value);
+                }
+                if header_name.as_str() == "upgrade" {
+                    acc.upgrade = to_val(header.value);
+                }
+                acc
+            })
+    }
+
+    fn is_ws(&self) -> bool {
+        self.connection.as_ref().is_some_and(|c| c == "upgrade")
+            && self.upgrade.as_ref().is_some_and(|u| u == "websocket")
     }
 }
 
@@ -126,6 +195,7 @@ pub struct ContextInner {
     rec_state: EdlRecordingState,
     selected_src_data: SourceTapeRequestData,
     tx_ltc_wait_worker: Sender<(EditRequestData, Context)>,
+    ws_client: Option<WebSocket<TcpStream>>,
     opt: Opt,
 }
 

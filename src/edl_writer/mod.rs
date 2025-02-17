@@ -8,7 +8,6 @@ pub mod frame_queue;
 
 use anyhow::{anyhow, Context, Error};
 use serde::ser::{SerializeStruct, Serializer};
-
 use serde::{Deserialize, Serialize};
 use vtc::Timecode;
 
