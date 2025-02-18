@@ -2,7 +2,7 @@ use anyhow::{anyhow, Error};
 use std::collections::VecDeque;
 use vtc::Timecode;
 
-use crate::edl_writer::AVChannels;
+use crate::edl_writer::{AVChannels, EditType};
 
 // for tracking frame logs in queue.
 // since we have no information about what the out time will be we have to wait
@@ -15,13 +15,6 @@ pub struct Edit {
     pub(crate) wipe_num: Option<u32>,
     pub(crate) av_channels: AVChannels,
     pub(crate) timecode: Timecode,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum EditType {
-    Cut,
-    Wipe,
-    Dissolve,
 }
 
 #[derive(Debug)]
