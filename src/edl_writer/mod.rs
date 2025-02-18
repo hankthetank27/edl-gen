@@ -8,8 +8,8 @@ pub mod frame_queue;
 
 use anyhow::{anyhow, Context, Error};
 use serde::ser::{SerializeStruct, Serializer};
-
 use serde::{Deserialize, Serialize};
+
 use vtc::Timecode;
 
 use std::{
@@ -58,7 +58,7 @@ impl Edl {
         Ok(Edl { file })
     }
 
-    pub fn write_from_edit(&mut self, edit: Edit) -> Result<Edit, Error> {
+    pub fn write_from_edit(&mut self, edit: Event) -> Result<Event, Error> {
         let edit_str: String = (&edit).try_into()?;
         self.file.write_all(format!("\n{edit_str}").as_bytes())?;
         self.file.flush()?;
@@ -111,19 +111,19 @@ impl Ntsc {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(test, derive(Deserialize))]
-pub enum Edit {
+pub enum Event {
     Cut(Clip),
     Dissolve(Dissolve),
     Wipe(Wipe),
 }
 
-impl Edit {
+impl Event {
     fn get_strs(&self) -> Result<(String, String), Error> {
         let c = "C   ".into();
         match self {
-            Edit::Cut(_) => Ok((c, "".into())),
-            Edit::Dissolve(_) => Ok((c, "D   ".into())),
-            Edit::Wipe(w) => {
+            Event::Cut(_) => Ok((c, "".into())),
+            Event::Dissolve(_) => Ok((c, "D   ".into())),
+            Event::Wipe(w) => {
                 let num_str = validate_num_size(w.wipe_number)?;
                 Ok((c, format!("W{num_str}")))
             }
@@ -131,44 +131,44 @@ impl Edit {
     }
 }
 
-impl<'a> From<&'a Edit> for &'a SourceTape {
-    fn from(edit: &'a Edit) -> Self {
+impl<'a> From<&'a Event> for &'a SourceTape {
+    fn from(edit: &'a Event) -> Self {
         match edit {
-            Edit::Cut(clip) => &clip.source_tape,
-            Edit::Dissolve(dissolve) => &dissolve.to.source_tape,
-            Edit::Wipe(wipe) => &wipe.to.source_tape,
+            Event::Cut(clip) => &clip.source_tape,
+            Event::Dissolve(dissolve) => &dissolve.to.source_tape,
+            Event::Wipe(wipe) => &wipe.to.source_tape,
         }
     }
 }
 
-impl From<&Edit> for AVChannels {
-    fn from(edit: &Edit) -> Self {
+impl From<&Event> for AVChannels {
+    fn from(edit: &Event) -> Self {
         match edit {
-            Edit::Cut(clip) => clip.av_channels,
-            Edit::Dissolve(dissolve) => dissolve.to.av_channels,
-            Edit::Wipe(wipe) => wipe.to.av_channels,
+            Event::Cut(clip) => clip.av_channels,
+            Event::Dissolve(dissolve) => dissolve.to.av_channels,
+            Event::Wipe(wipe) => wipe.to.av_channels,
         }
     }
 }
 
-impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
+impl<'a> TryFrom<FrameDataPair<'a>> for Event {
     type Error = Error;
 
     fn try_from(value: FrameDataPair<'a>) -> Result<Self, Self::Error> {
         let edit_duration_err = |e| {
             anyhow!(
-                "Edit type '{}' requires edit duration in frames",
+                "Event type '{}' requires edit duration in frames",
                 String::from(e)
             )
         };
 
         match &value.in_.edit_type {
-            EditType::Cut => Ok(Edit::Cut(value.as_dest_clip())),
+            EditType::Cut => Ok(Event::Cut(value.as_dest_clip())),
 
             e @ EditType::Dissolve => {
                 let from = value.as_prev_clip_flat();
                 let to = value.as_dest_clip();
-                Ok(Edit::Dissolve(Dissolve {
+                Ok(Event::Dissolve(Dissolve {
                     edit_duration_frames: value
                         .in_
                         .edit_duration_frames
@@ -181,7 +181,7 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Edit {
             e @ EditType::Wipe => {
                 let from = value.as_prev_clip_flat();
                 let to = value.as_dest_clip();
-                Ok(Edit::Wipe(Wipe {
+                Ok(Event::Wipe(Wipe {
                     edit_duration_frames: value
                         .in_
                         .edit_duration_frames
@@ -242,19 +242,19 @@ impl<'a> FrameDataPair<'a> {
     }
 }
 
-impl TryFrom<&Edit> for String {
+impl TryFrom<&Event> for String {
     type Error = Error;
 
-    fn try_from(edit: &Edit) -> Result<Self, Self::Error> {
+    fn try_from(edit: &Event) -> Result<Self, Self::Error> {
         let (cut_one_str, cut_two_str) = edit.get_strs()?;
         match edit {
-            Edit::Cut(clip) => {
+            Event::Cut(clip) => {
                 let from_cmt = clip.source_tape.as_from_clip_name();
                 let from: String = EdlEditLine::from_clip(clip, cut_one_str, None)?.into();
                 Ok(format!("\n{from}{from_cmt}"))
             }
 
-            Edit::Dissolve(dissolve) => {
+            Event::Dissolve(dissolve) => {
                 let from_cmt = dissolve.from.source_tape.as_from_clip_name();
                 let to_cmt = dissolve.to.source_tape.as_to_clip_name();
                 let from: String =
@@ -268,7 +268,7 @@ impl TryFrom<&Edit> for String {
                 Ok(format!("\n{from}\n{to}{from_cmt}{to_cmt}"))
             }
 
-            Edit::Wipe(wipe) => {
+            Event::Wipe(wipe) => {
                 let from_cmt = wipe.from.source_tape.as_from_clip_name();
                 let to_cmt = wipe.to.source_tape.as_to_clip_name();
                 let from: String = EdlEditLine::from_clip(&wipe.from, cut_one_str, None)?.into();
@@ -347,6 +347,10 @@ pub struct AVChannels {
 impl AVChannels {
     pub fn new(video: bool, audio: u8) -> Self {
         Self { video, audio }
+    }
+
+    pub fn video_only() -> Self {
+        AVChannels::new(true, 0)
     }
 }
 
@@ -513,24 +517,24 @@ mod test {
         fn wipe(&self) -> &Wipe;
     }
 
-    impl AssessEditType for Edit {
+    impl AssessEditType for Event {
         fn cut(&self) -> &Clip {
             match self {
-                Edit::Cut(clip) => clip,
+                Event::Cut(clip) => clip,
                 t @ _ => panic!("Expected Clip, got {:?}", t),
             }
         }
 
         fn dissolve(&self) -> &Dissolve {
             match self {
-                Edit::Dissolve(dis) => dis,
+                Event::Dissolve(dis) => dis,
                 t @ _ => panic!("Expected Dissolve, got {:?}", t),
             }
         }
 
         fn wipe(&self) -> &Wipe {
             match self {
-                Edit::Wipe(wipe) => wipe,
+                Event::Wipe(wipe) => wipe,
                 t @ _ => panic!("Expected Wipe, got {:?}", t),
             }
         }
@@ -610,7 +614,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(
@@ -653,7 +657,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(
@@ -690,7 +694,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(edit.cut().source_tape.to_string(), "tape_1".to_string());
@@ -721,7 +725,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Edit = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(<&str>::from(&edit.wipe().from.source_tape), "tape0");
@@ -763,7 +767,7 @@ mod test {
             record_out: tc_4,
         };
 
-        let cut = &Edit::Cut(clip_1.clone());
+        let cut = &Event::Cut(clip_1.clone());
         let cut_string: String = cut.try_into().unwrap();
         let cut_cmp: String = "
 001  AX    AA/V  C        01:00:00:00 01:05:10:00 01:00:00:00 01:05:10:00
@@ -771,7 +775,7 @@ mod test {
             .into();
         assert_eq!(cut_string, cut_cmp);
 
-        let wipe = &Edit::Wipe(Wipe {
+        let wipe = &Event::Wipe(Wipe {
             from: clip_1.clone(),
             to: clip_2.clone(),
             edit_duration_frames: 15,
@@ -786,7 +790,7 @@ mod test {
             .into();
         assert_eq!(wipe_string, wipe_cmp);
 
-        let dissove = &Edit::Dissolve(Dissolve {
+        let dissove = &Event::Dissolve(Dissolve {
             from: clip_1.clone(),
             to: clip_2.clone(),
             edit_duration_frames: 0,

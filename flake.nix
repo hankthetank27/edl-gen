@@ -72,6 +72,7 @@
         combine [
           stable.rustc
           stable.cargo
+          stable.clippy
           targets.${rustTarget}.stable.rust-std
         ];
     in

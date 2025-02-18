@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use test_support::MockDevice;
 
 use crate::{
-    edl_writer::{AVChannels, Clip, Dissolve, Edit, Ntsc, Wipe},
+    edl_writer::{AVChannels, Clip, Dissolve, Event, Ntsc, Wipe},
     ltc_decoder::{config::LTCDevice, LTCListener},
     server::{EditRequestData, EdlRecordingState, ReqBody, ResBody, Server, SourceTapeRequestData},
     state::{Logger, Opt},
@@ -111,8 +111,8 @@ pub fn wait_rec_state_started(port: u16) {
 trait JsonData {
     fn rec_state(&self) -> EdlRecordingState;
     fn has_edit_or_final_edits_body(&self) -> bool;
-    fn edit(&self) -> Edit;
-    fn final_edits(&self) -> Vec<Edit>;
+    fn edit(&self) -> Event;
+    fn final_edits(&self) -> Vec<Event>;
 }
 
 impl JsonData for minreq::Response {
@@ -125,11 +125,11 @@ impl JsonData for minreq::Response {
         res.edit.is_some() || res.final_edits.is_some()
     }
 
-    fn edit(&self) -> Edit {
+    fn edit(&self) -> Event {
         self.json::<ResBody>().unwrap().edit.expect("Expected edit")
     }
 
-    fn final_edits(&self) -> Vec<Edit> {
+    fn final_edits(&self) -> Vec<Event> {
         self.json::<ResBody>()
             .unwrap()
             .final_edits
@@ -146,57 +146,57 @@ trait AssessEditType {
 impl AssessEditType for minreq::Response {
     fn cut(&self) -> Clip {
         match self.edit() {
-            Edit::Cut(clip) => clip,
-            Edit::Dissolve(_) => panic!("Expected Cut, Dissolve"),
-            Edit::Wipe(_) => panic!("Expected Cut, got Wipe"),
+            Event::Cut(clip) => clip,
+            Event::Dissolve(_) => panic!("Expected Cut, Dissolve"),
+            Event::Wipe(_) => panic!("Expected Cut, got Wipe"),
         }
     }
 
     fn dissolve(&self) -> Dissolve {
         match self.edit() {
-            Edit::Dissolve(dis) => dis,
-            Edit::Wipe(_) => panic!("Expected Dissolve, got Wipe"),
-            Edit::Cut(_) => panic!("Expected Dissolve, got Cut"),
+            Event::Dissolve(dis) => dis,
+            Event::Wipe(_) => panic!("Expected Dissolve, got Wipe"),
+            Event::Cut(_) => panic!("Expected Dissolve, got Cut"),
         }
     }
 
     fn wipe(&self) -> Wipe {
         match self.edit() {
-            Edit::Wipe(wipe) => wipe,
-            Edit::Dissolve(_) => panic!("Expected Wipe, Dissolve"),
-            Edit::Cut(_) => panic!("Expected Wipe, got Cut"),
+            Event::Wipe(wipe) => wipe,
+            Event::Dissolve(_) => panic!("Expected Wipe, Dissolve"),
+            Event::Cut(_) => panic!("Expected Wipe, got Cut"),
         }
     }
 }
 
-impl AssessEditType for Edit {
+impl AssessEditType for Event {
     fn cut(&self) -> Clip {
         match self {
-            Edit::Cut(clip) => clip.clone(),
-            Edit::Dissolve(_) => panic!("Expected Cut, Dissolve"),
-            Edit::Wipe(_) => panic!("Expected Cut, got Wipe"),
+            Event::Cut(clip) => clip.clone(),
+            Event::Dissolve(_) => panic!("Expected Cut, Dissolve"),
+            Event::Wipe(_) => panic!("Expected Cut, got Wipe"),
         }
     }
 
     fn dissolve(&self) -> Dissolve {
         match self {
-            Edit::Dissolve(dis) => dis.clone(),
-            Edit::Wipe(_) => panic!("Expected Dissolve, got Wipe"),
-            Edit::Cut(_) => panic!("Expected Dissolve, got Cut"),
+            Event::Dissolve(dis) => dis.clone(),
+            Event::Wipe(_) => panic!("Expected Dissolve, got Wipe"),
+            Event::Cut(_) => panic!("Expected Dissolve, got Cut"),
         }
     }
 
     fn wipe(&self) -> Wipe {
         match self {
-            Edit::Wipe(wipe) => wipe.clone(),
-            Edit::Dissolve(_) => panic!("Expected Wipe, Dissolve"),
-            Edit::Cut(_) => panic!("Expected Wipe, got Cut"),
+            Event::Wipe(wipe) => wipe.clone(),
+            Event::Dissolve(_) => panic!("Expected Wipe, Dissolve"),
+            Event::Cut(_) => panic!("Expected Wipe, got Cut"),
         }
     }
 }
 
 fn serde_edit(edit: EditRequestData) -> String {
-    serde_json::to_value(&ReqBody::Edit(edit))
+    serde_json::to_value(&ReqBody::Event(edit))
         .unwrap()
         .to_string()
 }

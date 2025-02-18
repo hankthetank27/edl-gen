@@ -3,6 +3,7 @@ use httparse::{Request as ReqParser, Status};
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use vtc::Timecode;
 
 use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
@@ -14,10 +15,10 @@ use std::{
     thread,
 };
 
-use crate::edl_writer::frame_queue::EditType;
+use crate::edl_writer::frame_queue::{Edit, EditType};
 use crate::edl_writer::SourceTape;
 use crate::{
-    edl_writer::{frame_queue::FrameQueue, AVChannels, Edit, Edl, FrameDataPair},
+    edl_writer::{frame_queue::FrameQueue, AVChannels, Edl, Event, FrameDataPair},
     ltc_decoder::{DecodeErr, DecodeHandlers},
     state::Opt,
 };
@@ -148,23 +149,23 @@ enum EdlRecordingState {
 
 #[allow(clippy::large_enum_variant)]
 enum EditBody {
-    Edit(Edit),
-    Edits(Vec<Edit>),
+    Event(Event),
+    Edits(Vec<Event>),
 }
 
 #[derive(Serialize, Debug)]
 #[cfg_attr(test, derive(Deserialize))]
 struct ResBody {
     recording_state: EdlRecordingState,
-    edit: Option<Edit>,
-    final_edits: Option<Vec<Edit>>,
+    edit: Option<Event>,
+    final_edits: Option<Vec<Event>>,
 }
 
 impl ResBody {
     fn new(recording_state: EdlRecordingState, edit_or_edits: Option<EditBody>) -> Self {
         let (edit, final_edits) = edit_or_edits
             .map(|eb| match eb {
-                EditBody::Edit(e) => (Some(e), None),
+                EditBody::Event(e) => (Some(e), None),
                 EditBody::Edits(es) => (None, Some(es)),
             })
             .unwrap_or((None, None));
@@ -371,7 +372,7 @@ impl<'req> Request<'req> {
 #[serde(rename_all = "lowercase", tag = "req_type")]
 #[cfg_attr(test, derive(Serialize))]
 pub enum ReqBody {
-    Edit(EditRequestData),
+    Event(EditRequestData),
     Source(SourceTapeRequestData),
 }
 
@@ -379,7 +380,7 @@ impl ReqBody {
     fn expect_source(self) -> Result<SourceTapeRequestData, Error> {
         match self {
             ReqBody::Source(src) => Ok(src),
-            ReqBody::Edit(_) => Err(anyhow!(
+            ReqBody::Event(_) => Err(anyhow!(
                 "Unexpected request type: expected source, got edit"
             )),
         }
@@ -387,7 +388,7 @@ impl ReqBody {
 
     fn expect_edit(self) -> Result<EditRequestData, Error> {
         match self {
-            ReqBody::Edit(src) => Ok(src),
+            ReqBody::Event(src) => Ok(src),
             ReqBody::Source(_) => Err(anyhow!(
                 "Unexpected request type: expected edit, got source"
             )),
@@ -403,6 +404,19 @@ pub struct EditRequestData {
     pub(crate) wipe_num: Option<u32>,
     pub(crate) source_tape: Option<String>,
     pub(crate) av_channels: Option<AVChannels>,
+}
+
+impl EditRequestData {
+    pub fn take_as_edit(&mut self, timecode: Timecode) -> Result<Edit, Error> {
+        Ok(Edit {
+            edit_type: self.edit_type.as_str().try_into()?,
+            source_tape: self.source_tape.clone(),
+            edit_duration_frames: self.edit_duration_frames,
+            wipe_num: self.wipe_num.or(Some(1)),
+            av_channels: self.av_channels.unwrap_or_else(AVChannels::video_only),
+            timecode,
+        })
+    }
 }
 
 enum StartErr {
@@ -429,7 +443,7 @@ impl EditRequestData {
             .map_source_to_ctx(ctx_guard);
         Ok(ResBody::new(
             EdlRecordingState::Started,
-            Some(EditBody::Edit(edit)),
+            Some(EditBody::Event(edit)),
         ))
     }
 
@@ -453,7 +467,7 @@ impl EditRequestData {
     fn try_log_final_edit(
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
-    ) -> Result<Vec<Edit>, Error> {
+    ) -> Result<Vec<Event>, Error> {
         self.source_tape = None;
         self.av_channels = None;
         self.write_edit_to_edl(ctx_guard).and_then(|e| {
@@ -469,7 +483,7 @@ impl EditRequestData {
     fn write_edit_to_edl(
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
-    ) -> Result<Edit, Error> {
+    ) -> Result<Event, Error> {
         self.build_edit_from_current_and_prev(ctx_guard)
             .context("Could not log edit")
             .and_then(|edit| {
@@ -484,7 +498,7 @@ impl EditRequestData {
     fn build_edit_from_current_and_prev(
         &mut self,
         ctx_guard: &mut MutexGuard<ContextInner>,
-    ) -> Result<Edit, DecodeErr> {
+    ) -> Result<Event, DecodeErr> {
         self.try_queue_current_frame(ctx_guard)?;
         let prev_record = ctx_guard
             .frame_queue
@@ -504,13 +518,13 @@ impl EditRequestData {
         let tc = ctx_guard
             .decode_handlers
             .recv_frame_timeout(Duration::from_millis(1000))?;
-        ctx_guard.frame_queue.push(tc, self)?;
+        ctx_guard.frame_queue.push(self.take_as_edit(tc)?)?;
         Ok(())
     }
 
-    fn map_source_from_ctx(&mut self, ctx_guard: &MutexGuard<ContextInner>) -> &mut Self {
+    fn map_source_from_ctx(&mut self, ctx_guard: &mut MutexGuard<ContextInner>) -> &mut Self {
         if self.source_tape.is_none() {
-            self.source_tape = ctx_guard.selected_src_data.source_tape.clone();
+            self.source_tape = ctx_guard.selected_src_data.source_tape.take();
         }
         if self.av_channels.is_none() {
             self.av_channels = ctx_guard.selected_src_data.av_channels;
@@ -521,10 +535,10 @@ impl EditRequestData {
     fn wait_for_first_frame(&mut self, ctx: &mut Context) -> Result<ResBody, Error> {
         let decode_handlers = Arc::clone(&ctx.lock().decode_handlers);
         let tc = decode_handlers.recv_frame()?;
-        self.map_source_from_ctx(&ctx.lock());
+        self.map_source_from_ctx(&mut ctx.lock());
 
         let mut ctx_guard = ctx.lock();
-        ctx_guard.frame_queue.push(tc, self)?;
+        ctx_guard.frame_queue.push(self.take_as_edit(tc)?)?;
         log::info!("LTC signal detected. Recording to EDL");
         Ok(ResBody::new(
             ctx_guard.set_rec_state(EdlRecordingState::Started),
@@ -533,7 +547,7 @@ impl EditRequestData {
     }
 }
 
-impl Edit {
+impl Event {
     fn map_source_to_ctx(self, ctx_guard: &mut MutexGuard<ContextInner>) -> Self {
         let source_tape: &SourceTape = (&self).into();
         let av_channels: AVChannels = (&self).into();
