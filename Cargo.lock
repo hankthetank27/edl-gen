@@ -1215,6 +1215,7 @@ dependencies = [
  "eframe",
  "font-kit",
  "httparse",
+ "itoa",
  "libloading 0.8.6",
  "log",
  "ltc",

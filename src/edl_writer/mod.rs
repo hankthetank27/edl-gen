@@ -7,20 +7,20 @@
 pub mod edit_queue;
 
 use anyhow::{anyhow, Context, Error};
-use edit_queue::EditQueue;
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
-
 use vtc::Timecode;
 
-use std::path::{Path, PathBuf};
+use std::io::ErrorKind;
+use std::path::Path;
 use std::{
     cmp::Ordering,
     fs::File,
     io::{BufWriter, Write},
 };
 
-use crate::edl_writer::edit_queue::{Edit, EditType, OrderedEdit};
+use crate::edl_writer::edit_queue::{Edit, OrderedEdit};
+use edit_queue::EditQueue;
 
 #[derive(Debug)]
 pub struct Edl {
@@ -37,31 +37,38 @@ impl Edl {
     }
 
     fn init_file(dir: &Path, title: &str, ntsc: Ntsc) -> Result<BufWriter<File>, Error> {
-        let path = (0..)
-            .find_map(|i| {
-                let path = Edl::make_numbered_file_path(dir, title, (i > 0).then_some(i));
-                match path
-                    .try_exists()
-                    .context("could not deterimine if file is safe to write")
-                {
-                    Ok(exists) => (!exists).then_some(Ok(path)),
-                    Err(e) => Some(Err(e)),
-                }
-            })
-            .unwrap()?;
-        let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
+        let start = std::time::Instant::now();
+        let file = Edl::numbered_file(dir, title).context("Could not create EDL file")?;
+        println!("file naming took {:?}", start.elapsed());
+        let mut file = BufWriter::new(file);
         file.write_all(format!("TITLE: {}\nFCM: {}", title, <&str>::from(ntsc)).as_bytes())?;
         file.flush()?;
         Ok(file)
     }
 
-    fn make_numbered_file_path(path: &Path, title: &str, num: Option<u32>) -> PathBuf {
-        let mut path = path.to_path_buf();
-        match num {
-            Some(num) => path.push(format!("{}({}).edl", title, num)),
-            None => path.clone().push(format!("{}.edl", title)),
+    fn numbered_file(dir: &Path, title: &str) -> Result<File, Error> {
+        let mut dir = dir.to_path_buf();
+        let mut file_name = format!("{}.edl", title);
+        let mut num_buffer = itoa::Buffer::new();
+
+        for i in 0.. {
+            dir.push(&file_name);
+            match File::create_new(&dir) {
+                Ok(f) => return Ok(f),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                    dir.pop();
+                    if i == 0 {
+                        file_name.replace_range(title.len().., "(1).edl");
+                    } else {
+                        let num = num_buffer.format(i);
+                        file_name.replace_range(title.len() + 1.., num);
+                        file_name.push_str(").edl");
+                    }
+                }
+                Err(e) => return Err(anyhow!("Could not create file: {e}")),
+            }
         }
-        path
+        unreachable!();
     }
 
     pub fn write_event(&mut self, event: Event) -> Result<Event, Error> {
@@ -130,6 +137,13 @@ impl Ntsc {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum EditType {
+    Cut,
+    Dissolve,
+    Wipe,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(test, derive(Deserialize))]
@@ -146,7 +160,8 @@ impl Event {
             Event::Cut(_) => Ok((c, "".into())),
             Event::Dissolve(_) => Ok((c, "D   ".into())),
             Event::Wipe(w) => {
-                let num_str = validate_num_size(w.wipe_number)?;
+                let num_str = validate_num_size(w.wipe_number)
+                    .context("Wipe number above 999 not allowed")?;
                 Ok((c, format!("W{num_str}")))
             }
         }
@@ -467,7 +482,8 @@ impl EdlEditLine {
         };
 
         Ok(EdlEditLine {
-            edit_number: validate_num_size(clip.edit_number as u32)?,
+            edit_number: validate_num_size(clip.edit_number as u32)
+                .context("Cannot exceed 999 edits")?,
             source_tape: clip.source_tape.as_source_type().into(),
             av_channels: String::from(clip.av_channels)
                 .as_str()
@@ -511,14 +527,13 @@ impl Prefix for &str {
     }
 }
 
-// TODO: this should handle edit duration seperately
 fn validate_num_size(num: u32) -> Result<String, Error> {
     match num.cmp(&1000) {
         Ordering::Less => {
             let num = num.to_string();
             Ok(num.as_str().prefix_char_to_len(3, b'0'))
         }
-        _ => Err(anyhow!("Cannot exceed 999 edits")),
+        _ => Err(anyhow!("Number too large {num}")),
     }
 }
 

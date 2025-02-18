@@ -15,10 +15,8 @@ use std::{
     thread,
 };
 
-use crate::edl_writer::edit_queue::{Edit, EditType};
-use crate::edl_writer::SourceTape;
 use crate::{
-    edl_writer::{AVChannels, Edl, Event},
+    edl_writer::{edit_queue::Edit, AVChannels, EditType, Edl, Event, SourceTape},
     ltc_decoder::{DecodeErr, DecodeHandlers},
     state::Opt,
 };

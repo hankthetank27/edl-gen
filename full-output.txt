@@ -1,0 +1,323 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/deps/edl_gen-7b9a7b8d35483595)
+
+running 17 tests
+test edl_writer::test::av_channels_from_str ... ok
+test gui::update_version::test::test_bump_greater ... ok
+Audio input device: TestDevice
+Audio input channel: 1
+Audio input device: TestDevice
+Audio input channel: 1
+Server launched and listening at 127.0.0.1:54819
+Audio input device: TestDevice
+Audio input channel: 1
+Server launched and listening at 127.0.0.1:54820
+Audio input device: TestDevice
+Audio input channel: 1
+Audio input device: TestDevice
+Audio input channel: 1
+Audio input device: TestDevice
+Audio input channel: 1
+Server launched and listening at 127.0.0.1:54822
+Server launched and listening at 127.0.0.1:54818
+Server launched and listening at 127.0.0.1:54817
+test edl_writer::edit_queue::test::push_valid_frame ... ok
+Server launched and listening at 127.0.0.1:54821
+test edl_writer::test::edit_req_into ... ok
+test edl_writer::edit_queue::test::reject_invalid_frame ... ok
+test edl_writer::test::validate_edit ... ok
+Audio input device: TestDevice
+Audio input channel: 1
+Audio input device: TestDevice
+Audio input channel: 1
+Audio input device: TestDevice
+Audio input channel: 1
+Audio input device: TestDevice
+Audio input channel: 1
+Server launched and listening at 127.0.0.1:54829
+Server launched and listening at 127.0.0.1:54830
+Server launched and listening at 127.0.0.1:54831
+Server launched and listening at 127.0.0.1:54833
+Source tape selected: tape1
+AV channels selected: AA/V
+EDL recording start requested. Waiting for LTC signal.
+EDL recording start requested. Waiting for LTC signal.
+EDL recording start requested. Waiting for LTC signal.
+Source tape selected: tape1
+Recording not yet started!
+Source tape selected: tape1
+file naming took 264.125µs
+Source tape selected: tape1
+EDL recording start requested. Waiting for LTC signal.
+AV channels selected: AA/V
+file naming took 295.334µs
+file naming took 300.5µs
+file naming took 319.125µs
+EDL recording start requested. Waiting for LTC signal.
+EDL recording start requested. Waiting for LTC signal.
+EDL recording start requested. Waiting for LTC signal.
+EDL recording start requested. Waiting for LTC signal.
+EDL recording start requested. Waiting for LTC signal.
+file naming took 197.708µs
+EDL recording start requested. Waiting for LTC signal.
+file naming took 506.5µs
+file naming took 548.209µs
+file naming took 654.667µs
+file naming took 786.875µs
+file naming took 662.208µs
+LTC signal detected. Recording to EDL.
+LTC signal detected. Recording to EDL.
+LTC signal detected. Recording to EDL.
+Source tape selected: tape2
+AV channels selected: AA/V
+LTC signal detected. Recording to EDL.
+LTC signal detected. Recording to EDL.
+LTC signal detected. Recording to EDL.
+LTC signal detected. Recording to EDL.
+Error processing request: Error decoding frame: invalid edit type
+Source tape selected: tape1
+AV channels selected: AA/V
+EDL recording start requested. Waiting for LTC signal.
+file naming took 353.75µs
+Error processing request: Request does not contain a body
+test server::test::event_failures ... ok
+Audio input device: TestDevice
+Audio input channel: 1
+Server launched and listening at 127.0.0.1:54870
+
+001  AX    AA/V  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+
+001  AX       A  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+
+001  AX    AA/V  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+
+001  BL       V  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+
+001  AX       A  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+
+001  AX    AA/V  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+EDL recording ended.
+
+001  BL       V  C        01:00:00;01 01:00:00;01 01:00:00;01 01:00:00;01
+001  AX       A  D    040 01:00:00;01 01:00:01;11 01:00:00;01 01:00:01;11
+* TO CLIP NAME: tape1
+EDL recording start requested. Waiting for LTC signal.
+file naming took 300.709µs
+Recording not yet started!
+EDL recording start requested. Waiting for LTC signal.
+file naming took 441.958µs
+
+002  AX    AA/V  C        01:00:00;02 01:00:00;03 01:00:00;02 01:00:00;03
+* FROM CLIP NAME: tape2
+
+002  AX       A  C        01:00:00;02 01:00:00;02 01:00:00;02 01:00:00;02
+002  AX    AA/V  W001 015 01:00:00;02 01:00:00;17 01:00:00;02 01:00:00;17
+* FROM CLIP NAME: tape1
+* TO CLIP NAME: tape2
+
+002  AX    AA/V  C        01:00:00;02 01:00:00;03 01:00:00;02 01:00:00;03
+* FROM CLIP NAME: tape2
+
+002  AX    AA/V  C        01:00:00;02 01:00:00;03 01:00:00;02 01:00:00;03
+* FROM CLIP NAME: tape2
+
+002  AX       A  C        01:00:00;02 01:00:00;02 01:00:00;02 01:00:00;02
+002  AX    AA/V  W001 015 01:00:00;02 01:00:00;17 01:00:00;02 01:00:00;17
+* FROM CLIP NAME: tape1
+* TO CLIP NAME: tape2
+
+002  AX       A  C        01:00:00;02 01:00:00;02 01:00:00;02 01:00:00;02
+002  AX    AA/V  W001 015 01:00:00;02 01:00:00;17 01:00:00;02 01:00:00;17
+* FROM CLIP NAME: tape1
+* TO CLIP NAME: tape2
+test server::test::edit_events_with_preselected_src_basic ... ok
+
+003  AX    AA/V  C        01:00:00;03 01:00:00;04 01:00:00;03 01:00:00;04
+* FROM CLIP NAME: tape1
+
+003  AX    AA/V  C        01:00:00;03 01:00:00;04 01:00:00;03 01:00:00;04
+* FROM CLIP NAME: tape1
+
+003  AX    AA/V  C        01:00:00;03 01:00:00;04 01:00:00;03 01:00:00;04
+* FROM CLIP NAME: tape1
+
+003  AX    AA/V  C        01:00:00;03 01:00:00;04 01:00:00;03 01:00:00;04
+* FROM CLIP NAME: tape1
+
+003  AX    AA/V  C        01:00:00;03 01:00:00;03 01:00:00;03 01:00:00;03
+003  BL       V  D    010 01:00:00;03 01:00:00;13 01:00:00;03 01:00:00;13
+* FROM CLIP NAME: tape2
+EDL recording ended.
+test server::test::edit_events_with_preselected_src_with_disssolve ... ok
+
+004  AX    AA/V  C        01:00:00;04 01:00:00;04 01:00:00;04 01:00:00;04
+004  AX     AAA  W001 020 01:00:00;04 01:00:00;24 01:00:00;04 01:00:00;24
+* FROM CLIP NAME: tape1
+* TO CLIP NAME: tape2
+
+004  AX    AA/V  C        01:00:00;04 01:00:00;05 01:00:00;04 01:00:00;05
+* FROM CLIP NAME: tape2
+
+004  AX    AA/V  C        01:00:00;04 01:00:00;04 01:00:00;04 01:00:00;04
+004  AX     AAA  W001 020 01:00:00;04 01:00:00;24 01:00:00;04 01:00:00;24
+* FROM CLIP NAME: tape1
+* TO CLIP NAME: tape2
+
+004  AX    AA/V  C        01:00:00;04 01:00:00;04 01:00:00;04 01:00:00;04
+004  AX     AAA  W001 020 01:00:00;04 01:00:00;24 01:00:00;04 01:00:00;24
+* FROM CLIP NAME: tape1
+* TO CLIP NAME: tape2
+LTC signal detected. Recording to EDL.
+
+005  AX     AAA  C        01:00:00;05 01:00:00;05 01:00:00;05 01:00:00;05
+005  AX    AA/V  D    010 01:00:00;05 01:00:00;15 01:00:00;05 01:00:00;15
+* FROM CLIP NAME: tape2
+* TO CLIP NAME: tape1
+EDL recording ended.
+test server::test::edit_starts_diss_ends_cut ... ok
+
+001  AX    AA/V  C        01:00:00;05 01:00:00;06 01:00:00;05 01:00:00;06
+* FROM CLIP NAME: tape1
+
+005  AX     AAA  C        01:00:00;05 01:00:00;05 01:00:00;05 01:00:00;05
+005  AX    AA/V  D    010 01:00:00;05 01:00:00;15 01:00:00;05 01:00:00;15
+* FROM CLIP NAME: tape2
+* TO CLIP NAME: tape1
+
+005  AX    AA/V  C        01:00:00;05 01:00:00;05 01:00:00;05 01:00:00;05
+005  AX    AA/V  D    010 01:00:00;05 01:00:00;15 01:00:00;05 01:00:00;15
+* FROM CLIP NAME: tape2
+* TO CLIP NAME: tape1
+
+005  AX     AAA  C        01:00:00;05 01:00:00;05 01:00:00;05 01:00:00;05
+005  AX    AA/V  D    010 01:00:00;05 01:00:00;15 01:00:00;05 01:00:00;15
+* FROM CLIP NAME: tape2
+* TO CLIP NAME: tape1
+test server::test::event_non_ready ... ok
+
+006  AX    AA/V  C        01:00:00;06 01:00:00;07 01:00:00;06 01:00:00;07
+* FROM CLIP NAME: tape2
+
+006  AX    AA/V  C        01:00:00;06 01:00:00;07 01:00:00;06 01:00:00;07
+* FROM CLIP NAME: tape3
+
+006  AX    AA/V  C        01:00:00;06 01:00:00;07 01:00:00;06 01:00:00;07
+* FROM CLIP NAME: tape3
+
+007  AX    AA/V  C        01:00:00;07 01:00:00;08 01:00:00;07 01:00:00;08
+* FROM CLIP NAME: tape1
+EDL recording ended.
+test server::test::edit_starts_ends_cut ... ok
+
+007  AX    AA/V  C        01:00:00;07 01:00:00;08 01:00:00;07 01:00:00;08
+* FROM CLIP NAME: tape1
+
+007  AX    AA/V  C        01:00:00;07 01:00:00;07 01:00:00;07 01:00:00;07
+007  AX    AA/V  W001 005 01:00:00;07 01:00:00;12 01:00:00;07 01:00:00;12
+* FROM CLIP NAME: tape2
+* TO CLIP NAME: tape1
+
+008  AX    AA/V  C        01:00:00;08 01:00:00;08 01:00:00;08 01:00:00;08
+008  BL       V  D    042 01:00:00;08 01:00:01;20 01:00:00;08 01:00:01;20
+* FROM CLIP NAME: tape1
+EDL recording ended.
+test server::test::edit_starts_cut_ends_diss ... ok
+
+008  AX    AA/V  C        01:00:00;08 01:00:00;09 01:00:00;08 01:00:00;09
+* FROM CLIP NAME: tape2
+
+009  AX    AA/V  C        01:00:00;09 01:00:00;10 01:00:00;09 01:00:00;10
+* FROM CLIP NAME: tape2
+
+010  AX    AA/V  C        01:00:00;10 01:00:00;11 01:00:00;10 01:00:00;11
+* FROM CLIP NAME: tape2
+test server::test::select_src_and_alternate ... ok
+Recording not yet started!
+Recording has already started. You cannot start in this state.
+EDL recording ended
+Recording has already started. You cannot start in this state.
+EDL recording start requested. Waiting for LTC signal.
+Recording not yet started!
+file naming took 1.650459ms
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+LTC signal detected. Recording to EDL
+Recording not yet started!
+
+001  AX    AA/V  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+
+002  AX    AA/V  C        01:00:00;02 01:00:00;03 01:00:00;02 01:00:00;03
+* FROM CLIP NAME: 0
+LTC signal detected. Recording to EDL
+
+003  AX    AA/V  C        01:00:00;03 01:00:00;04 01:00:00;03 01:00:00;04
+* FROM CLIP NAME: 1
+
+001  AX    AA/V  C        01:00:00;01 01:00:00;02 01:00:00;01 01:00:00;02
+* FROM CLIP NAME: tape1
+test server::test::wait_for_ltc_on_start ... ok
+
+004  AX    AA/V  C        01:00:00;04 01:00:00;05 01:00:00;04 01:00:00;05
+* FROM CLIP NAME: 2
+
+005  AX    AA/V  C        01:00:00;05 01:00:00;06 01:00:00;05 01:00:00;06
+* FROM CLIP NAME: 3
+test server::test::event_repeats ... ok
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Recording not yet started!
+Source tape selected: tape1
+AV channels selected: AA/V
+LTC signal detected. Recording to EDL
+LTC signal detected. Recording to EDL
+
+001  AX    AA/V  C        01:00:00;02 01:00:00;03 01:00:00;02 01:00:00;03
+* FROM CLIP NAME: tape1
+
+002  BL    AA/V  C        01:00:00;03 01:00:00;04 01:00:00;03 01:00:00;04
+
+003  BL    AA/V  C        01:00:00;04 01:00:00;05 01:00:00;04 01:00:00;05
+
+004  AX    AA/V  C        01:00:00;05 01:00:00;06 01:00:00;05 01:00:00;06
+* FROM CLIP NAME: tape1
+
+005  BL    AA/V  C        01:00:00;06 01:00:00;07 01:00:00;06 01:00:00;07
+Source tape selected: tape2
+
+006  BL    AA/V  C        01:00:00;07 01:00:00;08 01:00:00;07 01:00:00;08
+
+007  AX    AA/V  C        01:00:00;08 01:00:00;09 01:00:00;08 01:00:00;09
+* FROM CLIP NAME: tape1
+
+008  AX    AA/V  C        01:00:00;09 01:00:00;10 01:00:00;09 01:00:00;10
+* FROM CLIP NAME: tape2
+
+009  BL    AA/V  C        01:00:00;10 01:00:00;11 01:00:00;10 01:00:00;11
+
+010  AX    AA/V  C        01:00:00;11 01:00:00;12 01:00:00;11 01:00:00;12
+* FROM CLIP NAME: tape1
