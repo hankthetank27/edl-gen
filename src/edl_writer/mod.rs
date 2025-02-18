@@ -7,16 +7,17 @@
 pub mod edit_queue;
 
 use anyhow::{anyhow, Context, Error};
-use serde::ser::{SerializeStruct, Serializer};
-use serde::{Deserialize, Serialize};
+use serde::{
+    ser::{SerializeStruct, Serializer},
+    Deserialize, Serialize,
+};
 use vtc::Timecode;
 
-use std::io::ErrorKind;
-use std::path::Path;
 use std::{
     cmp::Ordering,
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufWriter, ErrorKind, Write},
+    path::Path,
 };
 
 use crate::edl_writer::edit_queue::{Edit, OrderedEdit};
@@ -37,10 +38,8 @@ impl Edl {
     }
 
     fn init_file(dir: &Path, title: &str, ntsc: Ntsc) -> Result<BufWriter<File>, Error> {
-        let start = std::time::Instant::now();
-        let file = Edl::numbered_file(dir, title).context("Could not create EDL file")?;
-        println!("file naming took {:?}", start.elapsed());
-        let mut file = BufWriter::new(file);
+        let mut file =
+            BufWriter::new(Edl::numbered_file(dir, title).context("Could not create EDL file")?);
         file.write_all(format!("TITLE: {}\nFCM: {}", title, <&str>::from(ntsc)).as_bytes())?;
         file.flush()?;
         Ok(file)
@@ -50,25 +49,25 @@ impl Edl {
         let mut dir = dir.to_path_buf();
         let mut file_name = format!("{}.edl", title);
         let mut num_buffer = itoa::Buffer::new();
-
-        for i in 0.. {
-            dir.push(&file_name);
-            match File::create_new(&dir) {
-                Ok(f) => return Ok(f),
-                Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                    dir.pop();
-                    if i == 0 {
-                        file_name.replace_range(title.len().., "(1).edl");
-                    } else {
-                        let num = num_buffer.format(i);
-                        file_name.replace_range(title.len() + 1.., num);
-                        file_name.push_str(").edl");
+        (0..)
+            .find_map(|i| {
+                dir.push(&file_name);
+                match File::create_new(&dir) {
+                    Ok(f) => Some(Ok(f)),
+                    Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                        dir.pop();
+                        if i == 0 {
+                            file_name.replace_range(title.len().., "(1).edl");
+                        } else {
+                            file_name.replace_range(title.len() + 1.., num_buffer.format(i));
+                            file_name.push_str(").edl");
+                        }
+                        None
                     }
+                    Err(e) => Some(Err(anyhow!("Could not create file: {e}"))),
                 }
-                Err(e) => return Err(anyhow!("Could not create file: {e}")),
-            }
-        }
-        unreachable!();
+            })
+            .unwrap()
     }
 
     pub fn write_event(&mut self, event: Event) -> Result<Event, Error> {
@@ -542,6 +541,10 @@ mod test {
     use super::*;
     use vtc::rates;
 
+    use std::{fs, path::PathBuf};
+
+    use crate::utils;
+
     impl ToString for SourceTape {
         fn to_string(&self) -> String {
             <&str>::from(self).to_string()
@@ -622,6 +625,34 @@ mod test {
             }),
             "".to_string()
         );
+    }
+
+    #[test]
+    fn create_file() {
+        let path = PathBuf::from("./test-output/edl-writer");
+        fs::remove_dir_all(&path).ok();
+
+        let dir = utils::dirs::get_or_make_dir(path).unwrap();
+        let title = "test_title";
+
+        Edl::numbered_file(&dir, title).unwrap();
+        assert!(PathBuf::from("./test-output/edl-writer/test_title.edl").is_file());
+
+        for i in 1..101 {
+            assert!(
+                !PathBuf::from(format!("./test-output/edl-writer/test_title({i}).edl")).is_file()
+            );
+        }
+
+        for i in 1..101 {
+            Edl::numbered_file(&dir, title).unwrap();
+            assert!(
+                PathBuf::from(format!("./test-output/edl-writer/test_title({i}).edl")).is_file()
+            );
+        }
+
+        let files: Vec<_> = fs::read_dir(&dir).unwrap().collect();
+        assert!(files.len() == 101);
     }
 
     #[test]

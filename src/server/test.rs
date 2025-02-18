@@ -66,7 +66,7 @@ impl MockServer {
 
         Opt {
             title: file_name,
-            dir: get_or_make_dir(PathBuf::from("./test-output"))
+            dir: get_or_make_dir(PathBuf::from("./test-output/server"))
                 .unwrap_or_else(|_| PathBuf::from("./")),
             sample_rate: 44_100,
             fps: 30.0,
