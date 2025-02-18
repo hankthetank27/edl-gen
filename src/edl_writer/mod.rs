@@ -38,8 +38,7 @@ impl Edl {
     }
 
     fn init_file(dir: &Path, title: &str, ntsc: Ntsc) -> Result<BufWriter<File>, Error> {
-        let mut file =
-            BufWriter::new(Edl::numbered_file(dir, title).context("Could not create EDL file")?);
+        let mut file = BufWriter::new(Edl::numbered_file(dir, title)?);
         file.write_all(format!("TITLE: {}\nFCM: {}", title, <&str>::from(ntsc)).as_bytes())?;
         file.flush()?;
         Ok(file)
@@ -53,7 +52,6 @@ impl Edl {
             .find_map(|i| {
                 dir.push(&file_name);
                 match File::create_new(&dir) {
-                    Ok(f) => Some(Ok(f)),
                     Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                         dir.pop();
                         if i == 0 {
@@ -64,10 +62,11 @@ impl Edl {
                         }
                         None
                     }
-                    Err(e) => Some(Err(anyhow!("Could not create file: {e}"))),
+                    r @ _ => Some(r),
                 }
             })
             .unwrap()
+            .context("Could not create EDL file")
     }
 
     pub fn write_event(&mut self, event: Event) -> Result<Event, Error> {
@@ -528,10 +527,7 @@ impl Prefix for &str {
 
 fn validate_num_size(num: u32) -> Result<String, Error> {
     match num.cmp(&1000) {
-        Ordering::Less => {
-            let num = num.to_string();
-            Ok(num.as_str().prefix_char_to_len(3, b'0'))
-        }
+        Ordering::Less => Ok(itoa::Buffer::new().format(num).prefix_char_to_len(3, b'0')),
         _ => Err(anyhow!("Number too large {num}")),
     }
 }
