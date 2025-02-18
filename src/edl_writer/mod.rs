@@ -4,66 +4,88 @@
 // https://www.niwa.nu/2013/05/how-to-read-an-edl/
 // https://opentimelineio.readthedocs.io/en/latest/api/python/opentimelineio.adapters.cmx_3600.html
 
-pub mod frame_queue;
+pub mod edit_queue;
 
 use anyhow::{anyhow, Context, Error};
+use edit_queue::EditQueue;
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 use vtc::Timecode;
 
+use std::path::{Path, PathBuf};
 use std::{
     cmp::Ordering,
     fs::File,
     io::{BufWriter, Write},
 };
 
-use crate::{
-    edl_writer::frame_queue::{EditType, FrameData},
-    state::Opt,
-};
+use crate::edl_writer::edit_queue::{Edit, EditType, OrderedEdit};
 
 #[derive(Debug)]
 pub struct Edl {
     file: BufWriter<File>,
+    edit_queue: EditQueue,
 }
 
 impl Edl {
-    pub fn new(opt: &Opt) -> Result<Self, Error> {
-        let make_path = |n: Option<u32>| {
-            let mut path = opt.dir.clone();
-            match n {
-                Some(n) => path.push(format!("{}({}).edl", opt.title, n)),
-                None => path.push(format!("{}.edl", opt.title)),
-            };
-            path
-        };
-
-        let mut path = make_path(None);
-        for i in 1.. {
-            match path
-                .try_exists()
-                .context("could not deterimine if file is safe to write")?
-            {
-                true => path = make_path(Some(i)),
-                false => break,
-            };
-        }
-
-        let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
-        file.write_all(
-            format!("TITLE: {}\nFCM: {}", opt.title, String::from(opt.ntsc)).as_bytes(),
-        )?;
-        file.flush()?;
-        Ok(Edl { file })
+    pub fn new(dir: &Path, title: &str, ntsc: Ntsc) -> Result<Self, Error> {
+        Ok(Edl {
+            file: Edl::init_file(dir, title, ntsc)?,
+            edit_queue: EditQueue::default(),
+        })
     }
 
-    pub fn write_from_edit(&mut self, edit: Event) -> Result<Event, Error> {
-        let edit_str: String = (&edit).try_into()?;
-        self.file.write_all(format!("\n{edit_str}").as_bytes())?;
+    fn init_file(dir: &Path, title: &str, ntsc: Ntsc) -> Result<BufWriter<File>, Error> {
+        let path = (0..)
+            .find_map(|i| {
+                let path = Edl::make_numbered_file_path(dir, title, (i > 0).then_some(i));
+                match path
+                    .try_exists()
+                    .context("could not deterimine if file is safe to write")
+                {
+                    Ok(exists) => (!exists).then_some(Ok(path)),
+                    Err(e) => Some(Err(e)),
+                }
+            })
+            .unwrap()?;
+        let mut file = BufWriter::new(File::create_new(path).context("Could not create EDL file")?);
+        file.write_all(format!("TITLE: {}\nFCM: {}", title, <&str>::from(ntsc)).as_bytes())?;
+        file.flush()?;
+        Ok(file)
+    }
+
+    fn make_numbered_file_path(path: &Path, title: &str, num: Option<u32>) -> PathBuf {
+        let mut path = path.to_path_buf();
+        match num {
+            Some(num) => path.push(format!("{}({}).edl", title, num)),
+            None => path.clone().push(format!("{}.edl", title)),
+        }
+        path
+    }
+
+    pub fn write_event(&mut self, event: Event) -> Result<Event, Error> {
+        let event_str: String = (&event).try_into()?;
+        self.file.write_all(format!("\n{event_str}").as_bytes())?;
         self.file.flush()?;
-        log::info!("{edit_str}");
-        Ok(edit)
+        log::info!("{event_str}");
+        Ok(event)
+    }
+
+    pub fn push_edit(&mut self, edit: Edit) -> Result<(), Error> {
+        self.edit_queue.push(edit)
+    }
+
+    pub fn try_build_event(&mut self) -> Result<Event, Error> {
+        let prev_edit = self
+            .edit_queue
+            .pop()
+            .context("No previous value in frame_queue")?;
+        let curr_edit = self
+            .edit_queue
+            .front()
+            .context("No current value in frame_queue")?;
+        OrderedEditInOutPair::new(&prev_edit, curr_edit).try_into()
     }
 }
 
@@ -151,10 +173,10 @@ impl From<&Event> for AVChannels {
     }
 }
 
-impl<'a> TryFrom<FrameDataPair<'a>> for Event {
+impl<'a> TryFrom<OrderedEditInOutPair<'a>> for Event {
     type Error = Error;
 
-    fn try_from(value: FrameDataPair<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: OrderedEditInOutPair<'a>) -> Result<Self, Self::Error> {
         let edit_duration_err = |e| {
             anyhow!(
                 "Event type '{}' requires edit duration in frames",
@@ -195,14 +217,14 @@ impl<'a> TryFrom<FrameDataPair<'a>> for Event {
     }
 }
 
-pub struct FrameDataPair<'a> {
-    in_: &'a FrameData,
-    out_: &'a FrameData,
+pub struct OrderedEditInOutPair<'a> {
+    in_: &'a OrderedEdit,
+    out_: &'a OrderedEdit,
 }
 
-impl<'a> FrameDataPair<'a> {
-    pub fn new(in_: &'a FrameData, out_: &'a FrameData) -> Self {
-        FrameDataPair { in_, out_ }
+impl<'a> OrderedEditInOutPair<'a> {
+    pub fn new(in_: &'a OrderedEdit, out_: &'a OrderedEdit) -> Self {
+        OrderedEditInOutPair { in_, out_ }
     }
 
     pub fn as_dest_clip(&self) -> Clip {
@@ -592,7 +614,7 @@ mod test {
         let tc_1 = Timecode::with_frames("01:00:00:00", rates::F24).unwrap();
         let tc_2 = Timecode::with_frames("01:05:10:00", rates::F24).unwrap();
         let tc_3 = Timecode::with_frames("01:05:10:05", rates::F24).unwrap();
-        let frame_in = FrameData {
+        let frame_in = OrderedEdit {
             edit_number: 1,
             edit_type: EditType::Dissolve,
             source_tape: Some("tape_1 with long name".into()),
@@ -603,7 +625,7 @@ mod test {
             edit_duration_frames: Some(10),
             wipe_num: Some(1),
         };
-        let frame_out = FrameData {
+        let frame_out = OrderedEdit {
             edit_number: 2,
             edit_type: EditType::Cut,
             source_tape: Some("tape_2".into()),
@@ -614,7 +636,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = OrderedEditInOutPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(
@@ -635,7 +657,7 @@ mod test {
         assert_eq!(edit.dissolve().from.source_in, tc_1);
         assert_eq!(edit.dissolve().from.source_out, tc_1);
 
-        let frame_in = FrameData {
+        let frame_in = OrderedEdit {
             edit_number: 1,
             edit_type: EditType::Wipe,
             source_tape: Some("tape1".into()),
@@ -646,7 +668,7 @@ mod test {
             edit_duration_frames: Some(10),
             wipe_num: Some(1),
         };
-        let frame_out = FrameData {
+        let frame_out = OrderedEdit {
             edit_number: 2,
             edit_type: EditType::Dissolve,
             source_tape: Some("tape_2".into()),
@@ -657,7 +679,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = OrderedEditInOutPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(
@@ -672,7 +694,7 @@ mod test {
         assert_eq!(edit.wipe().from.source_in, tc_1);
         assert_eq!(edit.wipe().from.source_out, tc_1);
 
-        let frame_in = FrameData {
+        let frame_in = OrderedEdit {
             edit_number: 1,
             edit_type: EditType::Cut,
             source_tape: Some("tape_1".into()),
@@ -683,7 +705,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: Some(1),
         };
-        let frame_out = FrameData {
+        let frame_out = OrderedEdit {
             edit_number: 2,
             edit_type: EditType::Cut,
             source_tape: Some("tape_2".into()),
@@ -694,7 +716,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = OrderedEditInOutPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(edit.cut().source_tape.to_string(), "tape_1".to_string());
@@ -703,7 +725,7 @@ mod test {
         assert_eq!(edit.cut().source_out, tc_3);
 
         // with edit duration longer than edit time
-        let frame_in = FrameData {
+        let frame_in = OrderedEdit {
             edit_number: 1,
             edit_type: EditType::Wipe,
             source_tape: Some("tape1".into()),
@@ -714,7 +736,7 @@ mod test {
             edit_duration_frames: Some(10),
             wipe_num: Some(1),
         };
-        let frame_out = FrameData {
+        let frame_out = OrderedEdit {
             edit_number: 2,
             edit_type: EditType::Dissolve,
             source_tape: Some("tape2".into()),
@@ -725,7 +747,7 @@ mod test {
             edit_duration_frames: None,
             wipe_num: None,
         };
-        let edit: Event = FrameDataPair::new(&frame_in, &frame_out)
+        let edit: Event = OrderedEditInOutPair::new(&frame_in, &frame_out)
             .try_into()
             .unwrap();
         assert_eq!(<&str>::from(&edit.wipe().from.source_tape), "tape0");

@@ -25,14 +25,14 @@ pub enum EditType {
 }
 
 #[derive(Debug)]
-pub struct FrameQueue {
-    log: VecDeque<FrameData>,
+pub struct EditQueue {
+    log: VecDeque<OrderedEdit>,
     count: usize,
 }
 
-impl FrameQueue {
+impl EditQueue {
     pub fn new() -> Self {
-        FrameQueue {
+        EditQueue {
             log: VecDeque::new(),
             count: 0,
         }
@@ -48,34 +48,30 @@ impl FrameQueue {
         let prev_av_channels = self
             .front()
             .map(|front| front.av_channels)
-            .unwrap_or_else(|| AVChannels {
-                video: true,
-                audio: 0,
-            });
-        let record =
-            FrameData::try_from_edit_data(edit, prev_tape, prev_av_channels, self.count + 1)?;
+            .unwrap_or_else(AVChannels::video_only);
+        let record = OrderedEdit::try_from_edit(edit, prev_tape, prev_av_channels, self.count + 1)?;
         self.count += 1;
         self.log.push_back(record);
         Ok(())
     }
 
-    pub fn pop(&mut self) -> Option<FrameData> {
+    pub fn pop(&mut self) -> Option<OrderedEdit> {
         self.log.pop_front()
     }
 
-    pub fn front(&self) -> Option<&FrameData> {
+    pub fn front(&self) -> Option<&OrderedEdit> {
         self.log.front()
     }
 }
 
-impl Default for FrameQueue {
+impl Default for EditQueue {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct FrameData {
+pub struct OrderedEdit {
     pub(crate) edit_number: usize,
     pub(crate) edit_type: EditType,
     pub(crate) source_tape: Option<String>,
@@ -87,17 +83,17 @@ pub struct FrameData {
     pub(crate) wipe_num: Option<u32>,
 }
 
-impl FrameData {
-    pub fn try_from_edit_data(
+impl OrderedEdit {
+    pub fn try_from_edit(
         edit: Edit,
         prev_tape: Option<String>,
         prev_av_channels: AVChannels,
         edit_number: usize,
     ) -> Result<Self, Error> {
         let edit_duration_frames =
-            FrameData::validate_edit_type_duration(&edit.edit_type, &edit.edit_duration_frames)?;
-        let wipe_num = FrameData::validate_wipe_num(&edit.edit_type, &edit.wipe_num)?;
-        Ok(FrameData {
+            OrderedEdit::validate_edit_type_duration(&edit.edit_type, &edit.edit_duration_frames)?;
+        let wipe_num = OrderedEdit::validate_wipe_num(&edit.edit_type, &edit.wipe_num)?;
+        Ok(OrderedEdit {
             source_tape: edit.source_tape,
             av_channels: edit.av_channels,
             edit_type: edit.edit_type,
@@ -170,7 +166,7 @@ mod test {
 
     #[test]
     fn push_valid_frame() {
-        let mut queue = FrameQueue::new();
+        let mut queue = EditQueue::new();
         let tc_1 = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
         let mut req_1 = EditRequestData {
             edit_type: "Cut".into(),
@@ -194,7 +190,7 @@ mod test {
 
     #[test]
     fn reject_invalid_frame() {
-        let mut queue = FrameQueue::new();
+        let mut queue = EditQueue::new();
         let tc = Timecode::with_frames("01:00:00:00", vtc::rates::F24).unwrap();
         let mut req = EditRequestData {
             edit_type: "Cut".into(),
