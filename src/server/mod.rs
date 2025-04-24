@@ -5,14 +5,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use vtc::Timecode;
 
-use std::io::{prelude::*, BufReader};
-use std::net::{TcpListener, TcpStream};
-
-use std::sync::mpsc::Sender;
-use std::time::Duration;
 use std::{
-    sync::{mpsc, Arc},
+    io::{prelude::*, BufReader},
+    net::{TcpListener, TcpStream},
+    sync::{
+        mpsc::{self, Sender},
+        Arc,
+    },
     thread,
+    time::Duration,
 };
 
 use crate::{

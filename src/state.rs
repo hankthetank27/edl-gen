@@ -166,7 +166,7 @@ impl LTCSerializedConfg {
         self.device.as_ref().and_then(|device_name| {
             devices
                 .iter()
-                .find(|device| device.name().as_ref() == Some(device_name.inner()))
+                .find(|device| device.name().as_deref() == Some(device_name.inner()))
                 .cloned()
         })
     }
@@ -243,13 +243,13 @@ impl Writer for cpal::Host {
 
 impl Writer for Option<usize> {
     fn write(&self, key: &StoredOpts) -> Option<IVec> {
-        DB.insert_from_opts(key, self.unwrap_or_default().to_string().as_bytes())
+        DB.insert_from_opts(key, itoa::Buffer::new().format(self.unwrap_or_default()))
     }
 }
 
 impl Writer for Option<u32> {
     fn write(&self, key: &StoredOpts) -> Option<IVec> {
-        DB.insert_from_opts(key, self.unwrap_or_default().to_string().as_bytes())
+        DB.insert_from_opts(key, itoa::Buffer::new().format(self.unwrap_or_default()))
     }
 }
 

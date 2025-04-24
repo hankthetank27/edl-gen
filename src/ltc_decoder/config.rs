@@ -87,7 +87,7 @@ impl LTCDeviceName {
         LTCDeviceName(name)
     }
 
-    pub fn inner(&self) -> &String {
+    pub fn inner(&self) -> &str {
         &self.0
     }
 }

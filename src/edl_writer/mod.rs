@@ -84,7 +84,7 @@ impl Edl {
     pub fn try_build_event(&mut self) -> Result<Event, Error> {
         let prev_edit = self
             .edit_queue
-            .pop()
+            .pop_front()
             .context("No previous value in frame_queue")?;
         let curr_edit = self
             .edit_queue
@@ -190,12 +190,7 @@ impl<'a> TryFrom<OrderedEditInOutPair<'a>> for Event {
     type Error = Error;
 
     fn try_from(value: OrderedEditInOutPair<'a>) -> Result<Self, Self::Error> {
-        let edit_duration_err = |e| {
-            anyhow!(
-                "Event type '{}' requires edit duration in frames",
-                String::from(e)
-            )
-        };
+        let edit_duration_err = |e| anyhow!("Event type '{}' requires edit duration in frames", e);
 
         match &value.in_.edit_type {
             EditType::Cut => Ok(Event::Cut(value.as_dest_clip())),
@@ -242,7 +237,7 @@ impl<'a> OrderedEditInOutPair<'a> {
 
     pub fn as_dest_clip(&self) -> Clip {
         Clip {
-            source_tape: self.in_.source_tape.as_ref().into(),
+            source_tape: self.in_.source_tape.as_deref().into(),
             edit_number: self.in_.edit_number,
             av_channels: self.in_.av_channels,
             source_in: self.in_.timecode,
@@ -254,7 +249,7 @@ impl<'a> OrderedEditInOutPair<'a> {
 
     pub fn as_prev_clip_flat(&self) -> Clip {
         Clip {
-            source_tape: self.in_.prev_tape.as_ref().into(),
+            source_tape: self.in_.prev_tape.as_deref().into(),
             edit_number: self.in_.edit_number,
             av_channels: self.in_.prev_av_channels,
             source_in: self.in_.timecode,
@@ -345,8 +340,8 @@ impl SourceTape {
     }
 }
 
-impl From<Option<&String>> for SourceTape {
-    fn from(opt: Option<&String>) -> Self {
+impl From<Option<&str>> for SourceTape {
+    fn from(opt: Option<&str>) -> Self {
         match opt {
             Some(name) => SourceTape::AX(name.to_string()),
             None => SourceTape::BL,
@@ -814,7 +809,7 @@ mod test {
         let tc_4 = Timecode::with_frames("01:15:00:00", rates::F24).unwrap();
         let clip_1 = Clip {
             edit_number: 1,
-            source_tape: Some(&"test_clip.mov".to_string()).into(),
+            source_tape: Some("test_clip.mov").into(),
             av_channels: AVChannels::default(),
             source_in: tc_1,
             source_out: tc_2,
@@ -823,7 +818,7 @@ mod test {
         };
         let clip_2 = Clip {
             edit_number: 2,
-            source_tape: Some(&"test_clip_2.mov".to_string()).into(),
+            source_tape: Some("test_clip_2.mov").into(),
             av_channels: AVChannels::new(true, 3),
             source_in: tc_3,
             source_out: tc_4,
